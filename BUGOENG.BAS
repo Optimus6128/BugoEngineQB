@@ -1,3 +1,9 @@
+DECLARE SUB ClearBuffer (bufferNum%)
+DECLARE SUB WriteScreen (screenNum%)
+DECLARE SUB ClearVram ()
+DECLARE SUB WriteVram ()
+DECLARE SUB WaitForVsync ()
+
 DECLARE SUB PlotPixel (x%, y%, col%)
 DECLARE SUB SetObjectPosition (object AS ANY, px%, py%, pz%)
 DECLARE SUB SetObjectRotation (object AS ANY, rx%, ry%, rz%)
@@ -12,11 +18,6 @@ DECLARE SUB InitObject3Dtorus (params AS ANY, object AS ANY)
 DECLARE SUB InitObject3D (params AS ANY, object AS ANY)
 DECLARE SUB LoadObject3D (objFile$)
 
-DECLARE SUB WaitForVsync ()
-DECLARE SUB ClearFullBuffer ()
-DECLARE SUB ClearBuffer (bufferNum%)
-DECLARE SUB WriteFullScreen ()
-DECLARE SUB WriteScreen (screenNum%)
 
 CONST screenWidth% = 320
 CONST screenHeight% = 200
@@ -69,8 +70,9 @@ END TYPE
 
 '$DYNAMIC
 
-DIM SHARED screen0%(0 TO 31999)
-DIM SHARED screen1%(0 TO 31999)
+DIM SHARED vram%(0 TO 31999)
+
+DIM SHARED shr8%(0 TO &H7F7F)
 
 '$STATIC
 DIM SHARED transformedVertices(0 TO maxTempVertices%) AS Vertex3D
@@ -87,6 +89,9 @@ DIM objectCube AS Object3D
 DIM objectSphere AS Object3D
 DIM objectTorus AS Object3D
 
+FOR i% = 0 TO &H7F7F
+    shr8%(i%) = i% \ 256
+NEXT i%
 
 SCREEN 13
 
@@ -100,17 +105,17 @@ InitObject3D cubeParams, objectCube
 
 SetObjectPosition objectCube, 0, 0, 256
 
-timeStart! = TIMER
+timeStart = TIMER
 nframe& = 0
 
 DO WHILE INKEY$ = ""
-    t! = .5 * TIMER
+    't = .5 * TIMER
 
-    ClearFullBuffer
+    ClearVram
 
-    xt% = INT(SIN(2! * t!) * 63!)
-    yt% = INT(SIN(3! * t!) * 48!)
-    zt% = INT(256 + SIN(4! * t!) * 128!)
+    xt% = 0 'SIN(2 * t) * 63
+    yt% = 0 'SIN(3 * t) * 48
+    zt% = 256 ' + SIN(4 * t) * 128
     SetObjectPosition objectCube, xt%, yt%, zt%
 
     TransformObject3D objectCube
@@ -118,13 +123,13 @@ DO WHILE INKEY$ = ""
 
     'WaitForVsync
    
-    WriteFullScreen
+    WriteVram
 
     nframe& = nframe& + 1
 LOOP
-timeEnd! = TIMER
+timeEnd = TIMER
 
-PRINT nframe& / (timeEnd! - timeStart!)
+PRINT nframe& / (timeEnd - timeStart)
 SLEEP
 
 SUB AddTriangleIndices (i0%, i1%, i2%)
@@ -137,20 +142,9 @@ SUB AddTriangleIndices (i0%, i1%, i2%)
 
 END SUB
 
-SUB ClearBuffer (bufferNum%) STATIC
+SUB ClearVram
 
-    IF (bufferNum% = 0) THEN
-        REDIM screen0%(0 TO 31999)
-    ELSE
-        REDIM screen1%(0 TO 31999)
-    END IF
-
-END SUB
-
-SUB ClearFullBuffer
-
-    ClearBuffer 0
-    ClearBuffer 1
+    REDIM vram%(0 TO 31999)
 
 END SUB
 
@@ -225,16 +219,9 @@ END SUB
 
 SUB PlotPixel (x%, y%, col%)
 
-    IF y% < screenHeight% \ 2 THEN
-        screenSeg& = VARSEG(screen0%(0))
-    ELSE
-        screenSeg& = VARSEG(screen1%(0))
-        y% = y% - screenHeight% \ 2
-    END IF
-
-    DEF SEG = screenSeg& + y% * (screenWidth% \ 8)
-
-    POKE 2 * x%, col%
+    screenSeg& = VARSEG(vram%(0))
+    DEF SEG = screenSeg& + y% * (screenWidth% \ 16)
+    POKE x%, col%
 
 END SUB
 
@@ -321,26 +308,23 @@ SUB WaitForVsync
 
 END SUB
 
-SUB WriteFullScreen
-   
-    WriteScreen 0
-    WriteScreen 1
+SUB WriteVram
 
-END SUB
-
-SUB WriteScreen (screenNum%) STATIC
-
-    DEF SEG = &HA000 + screenNum% * 2000
-
-    IF (screenNum% = 0) THEN
-        FOR i% = 0 TO 31999
-            POKE i%, screen0%(i%)
-        NEXT i%
-    ELSE
-        FOR i% = 0 TO 31999
-            POKE i%, screen1%(i%)
-        NEXT i%
-    END IF
+    i% = 0
+    FOR y% = 0 TO 199
+        DEF SEG = &HA000 + y% * (screenWidth% \ 16)
+        FOR x% = 0 TO 319 STEP 16
+            c% = vram%(i%): POKE x%, shr8%(c%): POKE x% + 1, c% AND 255
+            c% = vram%(i% + 1): POKE x% + 2, shr8%(c%): POKE x% + 3, c% AND 255
+            c% = vram%(i% + 2): POKE x% + 4, shr8%(c%): POKE x% + 5, c% AND 255
+            c% = vram%(i% + 3): POKE x% + 6, shr8%(c%): POKE x% + 7, c% AND 255
+            c% = vram%(i% + 4): POKE x% + 8, shr8%(c%): POKE x% + 9, c% AND 255
+            c% = vram%(i% + 5): POKE x% + 10, shr8%(c%): POKE x% + 11, c% AND 255
+            c% = vram%(i% + 6): POKE x% + 12, shr8%(c%): POKE x% + 13, c% AND 255
+            c% = vram%(i% + 7): POKE x% + 14, shr8%(c%): POKE x% + 15, c% AND 255
+            i% = i% + 8
+        NEXT x%
+    NEXT y%
 
 END SUB
 
