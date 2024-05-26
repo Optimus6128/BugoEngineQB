@@ -1,3 +1,8 @@
+DECLARE SUB RunScene3D (t!)
+DECLARE SUB InitScene3D ()
+DECLARE SUB InitObject3DdotCube (params AS ANY, obj AS ANY)
+DECLARE SUB SetDefaultPalette ()
+DECLARE SUB InitPrecalcs ()
 DECLARE SUB ClearBuffer (bufferNum%)
 DECLARE SUB WriteScreen (screenNum%)
 DECLARE SUB ClearVram ()
@@ -5,30 +10,38 @@ DECLARE SUB WriteVram ()
 DECLARE SUB WaitForVsync ()
 
 DECLARE SUB PlotPixel (x%, y%, col%)
-DECLARE SUB SetObjectPosition (object AS ANY, px%, py%, pz%)
-DECLARE SUB SetObjectRotation (object AS ANY, rx%, ry%, rz%)
-DECLARE SUB RenderObject3D (object AS ANY)
-DECLARE SUB TransformObject3D (object AS ANY)
+DECLARE SUB SetObjectPosition (obj AS ANY, px!, py!, pz!)
+DECLARE SUB SetObjectRotation (obj AS ANY, rx!, ry!, rz!)
+DECLARE SUB RenderObject3D (obj AS ANY)
+DECLARE SUB TransformObject3D (obj AS ANY)
 DECLARE SUB AddTriangleIndices (i0%, i1%, i2%)
 DECLARE SUB ResetElementAddIndices ()
 
-DECLARE SUB InitObject3Dcube (params AS ANY, object AS ANY)
-DECLARE SUB InitObject3Dsphere (params AS ANY, object AS ANY)
-DECLARE SUB InitObject3Dtorus (params AS ANY, object AS ANY)
-DECLARE SUB InitObject3D (params AS ANY, object AS ANY)
+DECLARE SUB InitObject3Dcube (params AS ANY, obj AS ANY)
+DECLARE SUB InitObject3Dsphere (params AS ANY, obj AS ANY)
+DECLARE SUB InitObject3Dtorus (params AS ANY, obj AS ANY)
+DECLARE SUB InitObject3D (params AS ANY, obj AS ANY)
 DECLARE SUB LoadObject3D (objFile$)
 
 
 CONST screenWidth% = 320
 CONST screenHeight% = 200
 
-CONST maxTempVertices% = 256
+CONST maxTempVertices% = 512
 CONST maxVertices% = 1024
 CONST maxPolys% = 2048
 
 CONST objGenCube% = 0
-CONST objGenSphere% = 1
-CONST objGenTorus% = 2
+CONST objGenDotCube% = 1
+CONST objGenSphere% = 2
+CONST objGenTorus% = 3
+CONST numObjects% = 4
+
+
+
+' CONST PI! = 3.14159265359#
+' CONST D2R! = 180! / PI
+' CONST ANG256! = (256! * D2R!) / 360!
 
 
 TYPE Vertex3D
@@ -38,9 +51,9 @@ TYPE Vertex3D
 END TYPE
 
 TYPE Vector3D
-    x AS INTEGER
-    y AS INTEGER
-    z AS INTEGER
+    x AS SINGLE
+    y AS SINGLE
+    z AS SINGLE
 END TYPE
 
 TYPE PolyData
@@ -71,11 +84,11 @@ END TYPE
 '$DYNAMIC
 
 DIM SHARED vram%(0 TO 31999)
-
 DIM SHARED shr8%(0 TO &H7F7F)
 
 '$STATIC
-DIM SHARED transformedVertices(0 TO maxTempVertices%) AS Vertex3D
+
+DIM SHARED screenVertices(0 TO maxTempVertices%) AS Vertex3D
 
 DIM SHARED objectVertices(0 TO maxVertices%) AS Vertex3D
 DIM SHARED objectIndices%(0 TO 3 * maxPolys%)
@@ -85,53 +98,45 @@ DIM SHARED currentVertexAdd%
 DIM SHARED currentIndexAdd%
 DIM SHARED currentPolyAdd%
 
-DIM objectCube AS Object3D
-DIM objectSphere AS Object3D
-DIM objectTorus AS Object3D
+DIM SHARED object(0 TO numObjects% - 1) AS Object3D
+DIM SHARED currentObject%
 
-FOR i% = 0 TO &H7F7F
-    shr8%(i%) = i% \ 256
-NEXT i%
+currentObject% = objGenDotCube%
+
+
+InitPrecalcs
 
 SCREEN 13
 
+SetDefaultPalette
+
 ResetElementAddIndices
+InitScene3D
 
-DIM cubeParams AS ObjGenParams
 
-cubeParams.index = objGenCube%
-cubeParams.size = 32
-InitObject3D cubeParams, objectCube
+' ---------------------------------------
 
-SetObjectPosition objectCube, 0, 0, 256
-
-timeStart = TIMER
+timeStart! = TIMER
 nframe& = 0
 
-t = 0
+t! = 0
 DO WHILE INKEY$ = ""
-    't = .5 * TIMER
-    t = t + .01
+    'dt! = TIMER - timeStart!
 
     ClearVram
 
-    xt% = SIN(2 * t) * 63
-    yt% = SIN(3 * t) * 48
-    zt% = 256 + SIN(4 * t) * 128
-    SetObjectPosition objectCube, xt%, yt%, zt%
-
-    TransformObject3D objectCube
-    RenderObject3D objectCube
+    RunScene3D (t!)
 
     'WaitForVsync
    
     WriteVram
 
+    t! = t! + .01
     nframe& = nframe& + 1
 LOOP
-timeEnd = TIMER
+timeEnd! = TIMER
 
-PRINT nframe& / (timeEnd - timeStart)
+PRINT nframe& / (timeEnd! - timeStart!)
 SLEEP
 
 SUB AddTriangleIndices (i0%, i1%, i2%)
@@ -150,22 +155,25 @@ SUB ClearVram
 
 END SUB
 
-SUB InitObject3D (params AS ObjGenParams, object AS Object3D)
+SUB InitObject3D (params AS ObjGenParams, obj AS Object3D)
 
-    object.verticesOffset = currentVertexAdd%
-    object.indicesOffset = currentIndexAdd%
-    object.polysOffset = currentPolyAdd%
+    obj.verticesOffset = currentVertexAdd%
+    obj.indicesOffset = currentIndexAdd%
+    obj.polysOffset = currentPolyAdd%
 
     SELECT CASE params.index
        
         CASE objGenCube%
-            InitObject3Dcube params, object
+            InitObject3Dcube params, obj
+
+        CASE objGenDotCube%
+            InitObject3DdotCube params, obj
 
         CASE objGenSphere%
-            InitObject3Dsphere params, object
+            InitObject3Dsphere params, obj
 
         CASE objGenTorus%
-            InitObject3Dtorus params, object
+            InitObject3Dtorus params, obj
 
         CASE ELSE
             PRINT "Object Index doesn't exist.."
@@ -173,11 +181,11 @@ SUB InitObject3D (params AS ObjGenParams, object AS Object3D)
 
 END SUB
 
-SUB InitObject3Dcube (params AS ObjGenParams, object AS Object3D)
+SUB InitObject3Dcube (params AS ObjGenParams, obj AS Object3D)
 
-    object.numVertices = 8
-    object.numPolys = 12
-    object.numIndices = object.numPolys * 3
+    obj.numVertices = 8
+    obj.numPolys = 12
+    obj.numIndices = obj.numPolys * 3
 
     halfSize% = params.size
 
@@ -207,11 +215,61 @@ SUB InitObject3Dcube (params AS ObjGenParams, object AS Object3D)
 
 END SUB
 
-SUB InitObject3Dsphere (params AS ObjGenParams, object AS Object3D)
+SUB InitObject3DdotCube (params AS ObjGenParams, object AS Object3D)
+
+    object.numVertices = 512
+    object.numPolys = 0
+    object.numIndices = 0
+
+    halfSize% = params.size
+
+    FOR z% = -4 TO 3
+        FOR y% = -4 TO 3
+            FOR x% = -4 TO 3
+                objectVertices(currentVertexAdd%).x = x% * halfSize%
+                objectVertices(currentVertexAdd%).y = y% * halfSize%
+                objectVertices(currentVertexAdd%).z = z% * halfSize%
+                currentVertexAdd% = currentVertexAdd% + 1
+            NEXT x%
+        NEXT y%
+    NEXT z%
 
 END SUB
 
-SUB InitObject3Dtorus (params AS ObjGenParams, object AS Object3D)
+SUB InitObject3Dsphere (params AS ObjGenParams, obj AS Object3D)
+
+END SUB
+
+SUB InitObject3Dtorus (params AS ObjGenParams, obj AS Object3D)
+
+END SUB
+
+SUB InitPrecalcs
+
+' LUT to get high byte of 16bit word where each byte is from 0 to 127 only
+' This is to avoid the division on the current WriteVram method.
+' Bigger LUT for 256 didn't fit. Might discard later if replacing the screen copy with assembly.
+
+FOR i% = 0 TO &H7F7F
+    shr8%(i%) = i% \ 256
+NEXT i%
+
+END SUB
+
+SUB InitScene3D
+
+    DIM cubeParams AS ObjGenParams
+   
+    cubeParams.index = objGenCube%
+    cubeParams.size = 32
+    InitObject3D cubeParams, object(objGenCube%)
+
+
+    DIM dotCubeParams AS ObjGenParams
+
+    dotCubeParams.index = objGenDotCube%
+    dotCubeParams.size = 24
+    InitObject3D dotCubeParams, object(objGenDotCube%)
 
 END SUB
 
@@ -227,20 +285,24 @@ SUB PlotPixel (x%, y%, col%)
 
 END SUB
 
-SUB RenderObject3D (object AS Object3D)
+SUB RenderObject3D (obj AS Object3D)
 
-    n% = object.numVertices - 1
+    n% = obj.numVertices - 1
 
     FOR i% = 0 TO n%
        
-        z% = transformedVertices(i%).z
+        z% = screenVertices(i%).z
 
         IF z% > 0 THEN
-            x% = transformedVertices(i%).x
-            y% = transformedVertices(i%).y
+            x% = screenVertices(i%).x
+            y% = screenVertices(i%).y
 
-            IF (x% >= 0 AND x% < screenWidth% AND y% >= 0 AND y% < screenHeight%) THEN
-                PlotPixel x%, y%, 15
+            IF x% >= 0 AND x% < screenWidth% AND y% >= 0 AND y% < screenHeight% THEN
+                c% = (512 - z%) \ 8
+                IF c% < 0 THEN c% = 0
+                IF c% > 63 THEN c% = 63
+
+                PlotPixel x%, y%, c%
             END IF
         END IF
 
@@ -256,46 +318,97 @@ SUB ResetElementAddIndices
 
 END SUB
 
-SUB SetObjectPosition (object AS Object3D, px%, py%, pz%)
+SUB RunScene3D (t!)
 
-    object.position.x = px%
-    object.position.y = py%
-    object.position.z = pz%
+    xt! = SIN(t!) * 48
+    yt! = SIN(1.5 * t!) * 32
+    zt! = 256 + SIN(1.25 * t!) * 96
+   
+    SetObjectPosition object(currentObject%), xt!, yt!, zt!
+    SetObjectRotation object(currentObject%), .7 * t!, t!, 1.25 * t!
 
-END SUB
-
-SUB SetObjectRotation (object AS Object3D, rx%, ry%, rz%)
-
-    object.rotation.x = rx%
-    object.rotation.y = ry%
-    object.rotation.z = rz%
+    TransformObject3D object(currentObject%)
+    RenderObject3D object(currentObject%)
 
 END SUB
 
-SUB TransformObject3D (object AS Object3D)
+SUB SetDefaultPalette
 
-    CONST proj% = 256
+OUT &H3C8, 0
+FOR i% = 0 TO 63
+    OUT &H3C9, i%
+    OUT &H3C9, i%
+    OUT &H3C9, i%
+NEXT i%
 
-    posX% = object.position.x
-    posY% = object.position.y
-    posZ% = object.position.z
+END SUB
 
-    offset% = object.verticesOffset
-    n% = object.numVertices - 1
+SUB SetObjectPosition (obj AS Object3D, px!, py!, pz!)
+
+    obj.position.x = px!
+    obj.position.y = py!
+    obj.position.z = pz!
+
+END SUB
+
+SUB SetObjectRotation (obj AS Object3D, rx!, ry!, rz!)
+
+    obj.rotation.x = rx!
+    obj.rotation.y = ry!
+    obj.rotation.z = rz!
+
+END SUB
+
+SUB TransformObject3D (obj AS Object3D)
+
+    CONST proj! = 256
+
+    posX! = obj.position.x
+    posY! = obj.position.y
+    posZ! = obj.position.z
+
+    rotX! = obj.rotation.x
+    rotY! = obj.rotation.y
+    rotZ! = obj.rotation.z
+
+    cosxr! = COS(rotX!)
+    cosyr! = COS(rotY!)
+    coszr! = COS(rotZ!)
+    sinxr! = SIN(rotX!)
+    sinyr! = SIN(rotY!)
+    sinzr! = SIN(rotZ!)
+
+    ' Matrix values
+    m0! = cosyr! * coszr!
+    m1! = sinxr! * sinyr! * coszr! - cosxr! * sinzr!
+    m2! = cosxr! * sinyr! * coszr! + sinxr! * sinzr!
+    m3! = cosyr! * sinzr!
+    m4! = cosxr! * coszr! + sinxr! * sinyr! * sinzr!
+    m5! = -sinxr! * coszr! + cosxr! * sinyr! * sinzr!
+    m6! = -sinyr!
+    m7! = sinxr! * cosyr!
+    m8! = cosxr! * cosyr!
+
+
+    offset% = obj.verticesOffset
+    n% = obj.numVertices - 1
 
     FOR i% = 0 TO n%
 
         k% = i% + offset%
+        xo! = objectVertices(k%).x
+        yo! = objectVertices(k%).y
+        zo! = objectVertices(k%).z
 
-        z% = objectVertices(k%).z + posZ%
-        transformedVertices(i%).z = z%
+        x! = xo! * m0! + yo! * m3! + zo! * m6!
+        y! = xo! * m1! + yo! * m4! + zo! * m7!
+        z! = xo! * m2! + yo! * m5! + zo! * m8!
 
-        IF z% > 0 THEN
-            x% = objectVertices(k%).x + posX%
-            y% = objectVertices(k%).y + posY%
-
-            transformedVertices(i%).x = screenWidth% / 2 + (x% * proj%) \ z%
-            transformedVertices(i%).y = screenHeight% / 2 + (y% * proj%) \ z%
+        z! = z! + posZ!
+        screenVertices(i%).z = INT(z!)
+        IF z! > 0 THEN
+            screenVertices(i%).x = screenWidth% \ 2 + INT(((x! + posX!) * proj!) \ z!)
+            screenVertices(i%).y = screenHeight% \ 2 - INT(((y! + posY!) * proj!) \ z!)
         END IF
 
     NEXT i%
