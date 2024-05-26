@@ -108,14 +108,16 @@ SetObjectPosition objectCube, 0, 0, 256
 timeStart = TIMER
 nframe& = 0
 
+t = 0
 DO WHILE INKEY$ = ""
     't = .5 * TIMER
+    t = t + .01
 
     ClearVram
 
-    xt% = 0 'SIN(2 * t) * 63
-    yt% = 0 'SIN(3 * t) * 48
-    zt% = 256 ' + SIN(4 * t) * 128
+    xt% = SIN(2 * t) * 63
+    yt% = SIN(3 * t) * 48
+    zt% = 256 + SIN(4 * t) * 128
     SetObjectPosition objectCube, xt%, yt%, zt%
 
     TransformObject3D objectCube
@@ -314,14 +316,14 @@ SUB WriteVram
     FOR y% = 0 TO 199
         DEF SEG = &HA000 + y% * (screenWidth% \ 16)
         FOR x% = 0 TO 319 STEP 16
-            c% = vram%(i%): POKE x%, shr8%(c%): POKE x% + 1, c% AND 255
-            c% = vram%(i% + 1): POKE x% + 2, shr8%(c%): POKE x% + 3, c% AND 255
-            c% = vram%(i% + 2): POKE x% + 4, shr8%(c%): POKE x% + 5, c% AND 255
-            c% = vram%(i% + 3): POKE x% + 6, shr8%(c%): POKE x% + 7, c% AND 255
-            c% = vram%(i% + 4): POKE x% + 8, shr8%(c%): POKE x% + 9, c% AND 255
-            c% = vram%(i% + 5): POKE x% + 10, shr8%(c%): POKE x% + 11, c% AND 255
-            c% = vram%(i% + 6): POKE x% + 12, shr8%(c%): POKE x% + 13, c% AND 255
-            c% = vram%(i% + 7): POKE x% + 14, shr8%(c%): POKE x% + 15, c% AND 255
+            c% = vram%(i%): POKE x%, c% AND 255: POKE x% + 1, shr8%(c%)
+            c% = vram%(i% + 1): POKE x% + 2, c% AND 255: POKE x% + 3, shr8%(c%)
+            c% = vram%(i% + 2): POKE x% + 4, c% AND 255: POKE x% + 5, shr8%(c%)
+            c% = vram%(i% + 3): POKE x% + 6, c% AND 255: POKE x% + 7, shr8%(c%)
+            c% = vram%(i% + 4): POKE x% + 8, c% AND 255: POKE x% + 9, shr8%(c%)
+            c% = vram%(i% + 5): POKE x% + 10, c% AND 255: POKE x% + 11, shr8%(c%)
+            c% = vram%(i% + 6): POKE x% + 12, c% AND 255: POKE x% + 13, shr8%(c%)
+            c% = vram%(i% + 7): POKE x% + 14, c% AND 255: POKE x% + 15, shr8%(c%)
             i% = i% + 8
         NEXT x%
     NEXT y%
