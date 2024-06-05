@@ -1,3 +1,6 @@
+DECLARE SUB prepareEdgeList (x0%, y0%, x1%, y1%)
+DECLARE SUB drawEdges (col%)
+DECLARE SUB RenderObject3DpolyAlt (obj AS ANY)
 DECLARE SUB RenderObject3Ddots (obj AS ANY)
 DECLARE SUB RenderObject3Dwire (obj AS ANY)
 DECLARE SUB RenderObject3Dpoly (obj AS ANY)
@@ -31,7 +34,6 @@ DECLARE SUB InitObject3Dtorus (params AS ANY, obj AS ANY)
 DECLARE SUB InitObject3D (params AS ANY, obj AS ANY)
 DECLARE SUB LoadObject3D (objFile$)
 
-
 CONST SCRWIDTH% = 320
 CONST SCRHEIGHT% = 200
 CONST SCRWIDTH2% = SCRWIDTH% \ 2
@@ -40,6 +42,13 @@ CONST SCRHEIGHT2% = SCRHEIGHT% \ 2
 CONST SHADEMAX% = 63
 
 CONST BLURSWITCH% = 0   ' blur will overflow in interpreter only compiled exe
+
+CONST ALTPOLY% = 1
+CONST FPRAST% = 64
+
+' CONST PI! = 3.14159265359#
+' CONST D2R! = 180! / PI
+' CONST ANG256! = (256! * D2R!) / 360!
 
 
 CONST maxTempVertices% = 512
@@ -56,10 +65,6 @@ CONST renderTypeDots% = 0
 CONST renderTypeWire% = 1
 CONST renderTypePoly% = 2
 
-
-' CONST PI! = 3.14159265359#
-' CONST D2R! = 180! / PI
-' CONST ANG256! = (256! * D2R!) / 360!
 
 
 TYPE Vertex3D
@@ -103,10 +108,16 @@ TYPE Object3D
     rotation AS Vector3D
 END TYPE
 
+TYPE Edge
+    x AS INTEGER
+END TYPE
+
+
 '$DYNAMIC
 
 DIM SHARED vram%(0 TO 31999)
 DIM SHARED shr8%(0 TO &H7F7F)
+
 
 '$STATIC
 
@@ -121,6 +132,9 @@ DIM SHARED currentVertexAdd%
 DIM SHARED currentPolyIndexAdd%
 DIM SHARED currentLineIndexAdd%
 DIM SHARED currentPolyAdd%
+
+DIM SHARED edgeYmin%, edgeYmax%
+DIM SHARED polyEdge(0 TO 1, 0 TO SCRHEIGHT% - 1) AS Edge
 
 DIM SHARED object(0 TO numObjects% - 1) AS Object3D
 DIM SHARED currentObject%
@@ -151,7 +165,7 @@ DO WHILE INKEY$ = ""
 
     IF BLURSWITCH% = 0 THEN ClearVram
 
-    RunScene3D (t!)
+    RunScene3D (2 * t!)
 
     IF BLURSWITCH% = 1 THEN
         BlurVram
@@ -244,6 +258,25 @@ SUB ClearVram
 
 END SUB
 
+SUB drawEdges (col%)
+
+    screenSeg& = VARSEG(vram%(0))
+
+    FOR y% = edgeYmin% TO edgeYmax%
+        xs0% = polyEdge(0, y%).x
+        xs1% = polyEdge(1, y%).x
+
+        IF xs1% > xs0% THEN
+            DEF SEG = screenSeg& + y% * (SCRWIDTH% \ 16)
+            FOR x% = xs0% TO xs1%
+                POKE x%, col%
+            NEXT x%
+        END IF
+
+    NEXT y%
+
+END SUB
+
 SUB InitObject3D (params AS ObjGenParams, obj AS Object3D)
 
     obj.verticesOffset = currentVertexAdd%
@@ -293,10 +326,12 @@ SUB InitObject3Dcube (params AS ObjGenParams, obj AS Object3D)
 
     AddTriangleIndices 0, 3, 2
     AddTriangleIndices 0, 1, 3
+   
     AddTriangleIndices 1, 7, 3
     AddTriangleIndices 1, 5, 7
     AddTriangleIndices 5, 6, 7
     AddTriangleIndices 5, 4, 6
+   
     AddTriangleIndices 4, 2, 6
     AddTriangleIndices 4, 0, 2
     AddTriangleIndices 2, 7, 6
@@ -362,6 +397,12 @@ FOR i% = 0 TO &H7F7F
     shr8%(i%) = i% \ 256
 NEXT i%
 
+' Just randomize polygon colors for now
+
+    FOR i% = 0 TO maxPolys%
+        objectPolygons(i%).col = INT(RND * 63)
+    NEXT i%
+
 END SUB
 
 SUB InitScene3D
@@ -371,13 +412,13 @@ SUB InitScene3D
     cubeParams.index = objGenCube%
     cubeParams.size = 32
     InitObject3D cubeParams, object(objGenCube%)
-    object(objGenCube%).renderType = renderTypeWire%
+    object(objGenCube%).renderType = renderTypePoly%
 
-    DIM dotCubeParams AS ObjGenParams
+    'DIM dotCubeParams AS ObjGenParams
 
-    dotCubeParams.index = objGenDotCube%
-    dotCubeParams.size = 24
-    InitObject3D dotCubeParams, object(objGenDotCube%)
+    'dotCubeParams.index = objGenDotCube%
+    'dotCubeParams.size = 24
+    'InitObject3D dotCubeParams, object(objGenDotCube%)
 
 END SUB
 
@@ -393,6 +434,36 @@ SUB PlotPixel (x%, y%, col%)
 
 END SUB
 
+SUB prepareEdgeList (x0%, y0%, x1%, y1%)
+
+    IF y0% <> y1% THEN
+
+        IF (y0% < y1%) THEN
+            edgeIndex% = 0
+            xs0% = x0%: ys0% = y0%
+            xs1% = x1%: ys1% = y1%
+        ELSE
+            edgeIndex% = 1
+            xs0% = x1%: ys0% = y1%
+            xs1% = x0%: ys1% = y0%
+        END IF
+
+        xs0% = xs0% * FPRAST%
+        xs1% = xs1% * FPRAST%
+        dy% = ys1% - ys0%
+        dx% = (xs1% - xs0%) \ dy%
+
+        FOR y% = ys0% TO ys1% - 1
+            IF y% >= 0 AND y% < SCRHEIGHT% THEN
+                polyEdge(edgeIndex%, y%).x = xs0% \ FPRAST%
+            END IF
+            xs0% = xs0% + dx%
+        NEXT y%
+
+    END IF
+
+END SUB
+
 SUB RenderObject3D (obj AS Object3D)
 
     SELECT CASE obj.renderType
@@ -404,7 +475,11 @@ SUB RenderObject3D (obj AS Object3D)
             RenderObject3Dwire obj
 
         CASE renderTypePoly%
-            RenderObject3Dpoly obj
+            IF ALTPOLY% = 0 THEN
+                RenderObject3Dpoly obj
+            ELSE
+                RenderObject3DpolyAlt obj
+            END IF
 
         CASE ELSE
             PRINT "Render Type doesn't exist.."
@@ -438,6 +513,125 @@ SUB RenderObject3Ddots (obj AS Object3D)
 END SUB
 
 SUB RenderObject3Dpoly (obj AS Object3D)
+
+    offset% = obj.polyIndicesOffset
+    n% = offset% + obj.numPolyIndices - 1
+
+    polyIndex% = obj.polysOffset
+
+    FOR i% = offset% TO n% STEP 3
+
+        i0% = objectPolyIndices%(i%)
+        i1% = objectPolyIndices%(i% + 1)
+        i2% = objectPolyIndices%(i% + 2)
+
+        z0% = screenVertices(i0%).z
+        z1% = screenVertices(i1%).z
+        z2% = screenVertices(i2%).z
+
+        IF z0% > 0 AND z1% > 0 AND z2% > 0 THEN
+            x0% = screenVertices(i0%).x
+            x1% = screenVertices(i1%).x
+            x2% = screenVertices(i2%).x
+            y0% = screenVertices(i0%).y
+            y1% = screenVertices(i1%).y
+            y2% = screenVertices(i2%).y
+
+            a% = (x0% - x1%) * (y2% - y1%) - (x2% - x1%) * (y0% - y1%)
+            IF a% >= 0 THEN
+
+                min% = y0%
+                max% = min%
+                IF y1% < min% THEN min% = y1% ELSE IF y1% > max% THEN max% = y1%
+                IF y2% < min% THEN min% = y2% ELSE IF y2% > max% THEN max% = y2%
+                edgeYmin% = min%
+                edgeYmax% = max%
+
+                IF edgeYmin% < 0 THEN edgeYmin% = 0
+                IF edgeYmax% > SCRHEIGHT% - 1 THEN edgeYmax% = SCRHEIGHT% - 1
+
+                IF edgeYmax% > edgeYmin% THEN
+                    prepareEdgeList x0%, y0%, x1%, y1%
+                    prepareEdgeList x1%, y1%, x2%, y2%
+                    prepareEdgeList x2%, y2%, x0%, y0%
+
+                    col% = objectPolygons(polyIndex%).col
+                    drawEdges col%
+                END IF
+            END IF
+        END IF
+
+        polyIndex% = polyIndex% + 1
+    NEXT i%
+
+END SUB
+
+SUB RenderObject3DpolyAlt (obj AS Object3D)
+
+    screenSeg& = VARSEG(vram%(0))
+
+    offset% = obj.polyIndicesOffset
+    n% = offset% + obj.numPolyIndices - 1
+
+    polyIndex% = obj.polysOffset
+
+    FOR i% = offset% TO n% STEP 3
+
+        i0% = objectPolyIndices%(i%)
+        i1% = objectPolyIndices%(i% + 1)
+        i2% = objectPolyIndices%(i% + 2)
+
+        z0% = screenVertices(i0%).z
+        z1% = screenVertices(i1%).z
+        z2% = screenVertices(i2%).z
+
+        IF z0% > 0 AND z1% > 0 AND z2% > 0 THEN
+            x0% = screenVertices(i0%).x
+            y0% = screenVertices(i0%).y
+            x1% = screenVertices(i1%).x
+            y1% = screenVertices(i1%).y
+            x2% = screenVertices(i2%).x
+            y2% = screenVertices(i2%).y
+
+            xMin% = x0%
+            yMin% = y0%
+            xMax% = xMin%
+            yMax% = yMin%
+
+            IF x1% < xMin% THEN xMin% = x1%
+            IF x1% > xMax% THEN xMax% = x1%
+            IF y1% < yMin% THEN yMin% = y1%
+            IF y1% > yMax% THEN yMax% = y1%
+
+            IF x2% < xMin% THEN xMin% = x2%
+            IF x2% > xMax% THEN xMax% = x2%
+            IF y2% < yMin% THEN yMin% = y2%
+            IF y2% > yMax% THEN yMax% = y2%
+
+            IF xMin% < 0 THEN xMin% = 0
+            IF yMin% < 0 THEN yMin% = 0
+            IF xMax% > SCRWIDTH% THEN xMax% = SCRWIDTH%
+            IF yMax% > SCRHEIGHT% THEN yMax% = SCRHEIGHT%
+
+            col% = objectPolygons(polyIndex%).col
+
+            FOR y% = yMin% TO yMax% - 1
+                DEF SEG = screenSeg& + y% * (SCRWIDTH% \ 16)
+                FOR x% = xMin% TO xMax% - 1
+                    IF (y% - y0%) * (x1% - x0%) - (x% - x0%) * (y1% - y0%) <= 0 THEN
+                        IF (y% - y1%) * (x2% - x1%) - (x% - x1%) * (y2% - y1%) <= 0 THEN
+                            IF (y% - y2%) * (x0% - x2%) - (x% - x2%) * (y0% - y2%) <= 0 THEN
+                                POKE x%, col%
+                            END IF
+                        END IF
+                    END IF
+                NEXT x%
+            NEXT y%
+
+        END IF
+
+        polyIndex% = polyIndex% + 1
+    NEXT i%
 
 END SUB
 
@@ -503,10 +697,13 @@ END SUB
 SUB SetDefaultPalette
 
 OUT &H3C8, 0
-FOR i% = 0 TO 127
-    OUT &H3C9, i%
-    OUT &H3C9, i%
-    OUT &H3C9, i%
+OUT &H3C9, 63
+OUT &H3C9, 0
+OUT &H3C9, 0
+FOR i% = 1 TO 127
+    OUT &H3C9, i% \ 2
+    OUT &H3C9, i% \ 2
+    OUT &H3C9, 7
 NEXT i%
 
 END SUB
