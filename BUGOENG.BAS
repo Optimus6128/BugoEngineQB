@@ -1,3 +1,4 @@
+DECLARE SUB WriteVram ()
 DECLARE SUB prepareEdgeList (x0%, y0%, x1%, y1%)
 DECLARE SUB drawEdges (col%)
 DECLARE SUB RenderObject3DpolyAlt (obj AS ANY)
@@ -17,7 +18,6 @@ DECLARE SUB InitPrecalcs ()
 DECLARE SUB ClearBuffer (bufferNum%)
 DECLARE SUB WriteScreen (screenNum%)
 DECLARE SUB ClearVram ()
-DECLARE SUB WriteVram ()
 DECLARE SUB WaitForVsync ()
 
 DECLARE SUB PlotPixel (x%, y%, col%)
@@ -43,7 +43,7 @@ CONST SHADEMAX% = 63
 
 CONST BLURSWITCH% = 0   ' blur will overflow in interpreter only compiled exe
 
-CONST ALTPOLY% = 1
+CONST ALTPOLY% = 0
 CONST FPRAST% = 64
 
 ' CONST PI! = 3.14159265359#
@@ -115,9 +115,9 @@ END TYPE
 
 '$DYNAMIC
 
-DIM SHARED vram%(0 TO 31999)
-DIM SHARED shr8%(0 TO &H7F7F)
-
+DIM SHARED vram%(0 TO 32001)
+vram%(0) = 320 * 8
+vram%(1) = 200
 
 '$STATIC
 
@@ -208,7 +208,7 @@ END SUB
 SUB BlurVram
 
     ' Dirty blur two pixels at once (works only if colors are from 0 to 63)
-    FOR i% = SCRWIDTH2% TO SCRWIDTH2% * (SCRHEIGHT% - 1) - 1
+    FOR i% = 2 + SCRWIDTH2% TO 2 + SCRWIDTH2% * (SCRHEIGHT% - 1) - 1
         vram%(i%) = ((vram%(i% - 1) + vram%(i% + 1) + vram%(i% - SCRWIDTH2%) + vram%(i% + SCRWIDTH2%)) \ 4) AND &H3F3F
     NEXT i%
 
@@ -219,7 +219,7 @@ END SUB
 SUB BlurVramX
 
     ' Dirty blur two pixels at once (works only if colors are from 0 to 127)
-    FOR i% = SCRWIDTH% \ 2 TO (SCRWIDTH% \ 2) * (SCRHEIGHT% - 1) - 1
+    FOR i% = 2 + SCRWIDTH% \ 2 TO 2 + (SCRWIDTH% \ 2) * (SCRHEIGHT% - 1) - 1
         vram%(i%) = ((vram%(i% - 1) + vram%(i% + 1)) \ 2) AND &H7F7F
     NEXT i%
 
@@ -230,7 +230,7 @@ END SUB
 SUB BlurVramY
 
     ' Dirty blur two pixels at once (works only if colors are from 0 to 127)
-    FOR i% = SCRWIDTH2% TO SCRWIDTH2% * (SCRHEIGHT% - 1) - 1
+    FOR i% = 2 + SCRWIDTH2% TO 2 + SCRWIDTH2% * (SCRHEIGHT% - 1) - 1
         vram%(i%) = ((vram%(i% - SCRWIDTH2%) + vram%(i% + SCRWIDTH2%)) \ 2) AND &H7F7F
     NEXT i%
 
@@ -241,12 +241,12 @@ END SUB
 SUB ClearBlurJunk
 
     ' Clear junk at top scanline
-    FOR i% = 0 TO SCRWIDTH2% - 1
+    FOR i% = 2 TO 2 + SCRWIDTH2% - 1
         vram%(i%) = 0
     NEXT i%
 
     ' Clear junk at bottom scanline
-    FOR i% = SCRWIDTH2% * (SCRHEIGHT% - 1) TO SCRWIDTH2% * SCRHEIGHT% - 1
+    FOR i% = 2 + SCRWIDTH2% * (SCRHEIGHT% - 1) TO 2 + SCRWIDTH2% * SCRHEIGHT% - 1
         vram%(i%) = 0
     NEXT i%
 
@@ -254,7 +254,10 @@ END SUB
 
 SUB ClearVram
 
-    REDIM vram%(0 TO 31999)
+    REDIM vram%(0 TO 32001)
+
+    vram%(0) = 320 * 8
+    vram%(1) = 200
 
 END SUB
 
@@ -269,7 +272,7 @@ SUB drawEdges (col%)
         IF xs1% > xs0% THEN
             DEF SEG = screenSeg& + y% * (SCRWIDTH% \ 16)
             FOR x% = xs0% TO xs1%
-                POKE x%, col%
+                POKE 4 + x%, col%
             NEXT x%
         END IF
 
@@ -388,19 +391,11 @@ END SUB
 
 SUB InitPrecalcs
 
-
-' LUT to get high byte of 16bit word where each byte is from 0 to 127 only
-' This is to avoid the division on the current WriteVram method.
-' Bigger LUT for 256 didn't fit. Might discard later if replacing the screen copy with assembly.
-
-FOR i% = 0 TO &H7F7F
-    shr8%(i%) = i% \ 256
-NEXT i%
-
 ' Just randomize polygon colors for now
 
     FOR i% = 0 TO maxPolys%
-        objectPolygons(i%).col = INT(RND * 63)
+        c% = 31 + INT(RND * 63)
+        objectPolygons(i%).col = c%
     NEXT i%
 
 END SUB
@@ -414,11 +409,11 @@ SUB InitScene3D
     InitObject3D cubeParams, object(objGenCube%)
     object(objGenCube%).renderType = renderTypePoly%
 
-    'DIM dotCubeParams AS ObjGenParams
+    DIM dotCubeParams AS ObjGenParams
 
-    'dotCubeParams.index = objGenDotCube%
-    'dotCubeParams.size = 24
-    'InitObject3D dotCubeParams, object(objGenDotCube%)
+    dotCubeParams.index = objGenDotCube%
+    dotCubeParams.size = 24
+    InitObject3D dotCubeParams, object(objGenDotCube%)
 
 END SUB
 
@@ -430,7 +425,7 @@ SUB PlotPixel (x%, y%, col%)
 
     screenSeg& = VARSEG(vram%(0))
     DEF SEG = screenSeg& + y% * (SCRWIDTH% \ 16)
-    POKE x%, col%
+    POKE 4 + x%, col%
 
 END SUB
 
@@ -621,7 +616,7 @@ SUB RenderObject3DpolyAlt (obj AS Object3D)
                     IF (y% - y0%) * (x1% - x0%) - (x% - x0%) * (y1% - y0%) <= 0 THEN
                         IF (y% - y1%) * (x2% - x1%) - (x% - x1%) * (y2% - y1%) <= 0 THEN
                             IF (y% - y2%) * (x0% - x2%) - (x% - x2%) * (y0% - y2%) <= 0 THEN
-                                POKE x%, col%
+                                POKE 4 + x%, col%
                             END IF
                         END IF
                     END IF
@@ -682,9 +677,9 @@ END SUB
 
 SUB RunScene3D (t!)
 
-    xt! = SIN(t!) * 48
-    yt! = SIN(1.5 * t!) * 32
-    zt! = 256 + SIN(1.25 * t!) * 96
+    xt! = 0 'SIN(t!) * 48
+    yt! = 0 'SIN(1.5 * t!) * 32
+    zt! = 256 '+ SIN(1.25 * t!) * 96
    
     SetObjectPosition object(currentObject%), xt!, yt!, zt!
     SetObjectRotation object(currentObject%), .7 * t!, t!, 1.25 * t!
@@ -697,7 +692,7 @@ END SUB
 SUB SetDefaultPalette
 
 OUT &H3C8, 0
-OUT &H3C9, 63
+OUT &H3C9, 0
 OUT &H3C9, 0
 OUT &H3C9, 0
 FOR i% = 1 TO 127
@@ -790,21 +785,7 @@ END SUB
 
 SUB WriteVram
 
-    i% = 0
-    FOR y% = 0 TO 199
-        DEF SEG = &HA000 + y% * (SCRWIDTH% \ 16)
-        FOR x% = 0 TO 319 STEP 16
-            c% = vram%(i%): POKE x%, c% AND 255: POKE x% + 1, shr8%(c%)
-            c% = vram%(i% + 1): POKE x% + 2, c% AND 255: POKE x% + 3, shr8%(c%)
-            c% = vram%(i% + 2): POKE x% + 4, c% AND 255: POKE x% + 5, shr8%(c%)
-            c% = vram%(i% + 3): POKE x% + 6, c% AND 255: POKE x% + 7, shr8%(c%)
-            c% = vram%(i% + 4): POKE x% + 8, c% AND 255: POKE x% + 9, shr8%(c%)
-            c% = vram%(i% + 5): POKE x% + 10, c% AND 255: POKE x% + 11, shr8%(c%)
-            c% = vram%(i% + 6): POKE x% + 12, c% AND 255: POKE x% + 13, shr8%(c%)
-            c% = vram%(i% + 7): POKE x% + 14, c% AND 255: POKE x% + 15, shr8%(c%)
-            i% = i% + 8
-        NEXT x%
-    NEXT y%
+    PUT (0, 0), vram%, PSET
 
 END SUB
 
