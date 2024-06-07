@@ -1,3 +1,4 @@
+DECLARE SUB drawEdgesArr (col%)
 DECLARE SUB WriteVram ()
 DECLARE SUB prepareEdgeList (x0%, y0%, x1%, y1%)
 DECLARE SUB drawEdges (col%)
@@ -165,7 +166,7 @@ DO WHILE INKEY$ = ""
 
     IF BLURSWITCH% = 0 THEN ClearVram
 
-    RunScene3D (2 * t!)
+    RunScene3D (t!)
 
     IF BLURSWITCH% = 1 THEN
         BlurVram
@@ -265,19 +266,69 @@ SUB drawEdges (col%)
 
     screenSeg& = VARSEG(vram%(0))
 
-    FOR y% = edgeYmin% TO edgeYmax% - 1 ' one less edge bottom to avoid overdraw
+    yEnd% = edgeYmax% - 1 ' one less edge bottom to avoid overdraw
+    FOR y% = edgeYmin% TO yEnd%
         xs0% = polyEdge(0, y%).x
-        xs1% = polyEdge(1, y%).x
+        xs1% = polyEdge(1, y%).x - 1 ' one less pixel right to avoid overdraw
 
-        IF xs1% > xs0% THEN
-        DEF SEG = screenSeg& + y% * (SCRWIDTH% \ 16)
-            FOR x% = xs0% TO xs1% - 1   ' one less pixel on the right to avoid overdraw
-                'bg% = PEEK(x% + 4) ' enable and XOR with col% to test for overdraw
+        IF xs1% >= xs0% THEN
+            DEF SEG = screenSeg& + y% * (SCRWIDTH% \ 16)
+
+            IF xs0% AND 1 THEN
+                POKE 4 + xs0%, col%
+                xs0% = xs0% + 1
+            END IF
+            IF NOT xs1% AND 1 THEN
+                POKE 4 + xs1%, col%
+                xs1% = xs1% - 1
+            END IF
+
+            FOR x% = xs0% TO xs1% STEP 2
                 POKE 4 + x%, col%
+                POKE 5 + x%, col%
             NEXT x%
-            DEF SEG
         END IF
 
+    NEXT y%
+
+END SUB
+
+SUB drawEdgesArr (col%)
+
+    colH% = col% * 256
+    col16% = colH% OR col%
+
+    yEnd% = edgeYmax% - 1 ' one less edge bottom to avoid overdraw
+    ofs% = 2 + edgeYmin% * (SCRWIDTH% \ 2)
+    FOR y% = edgeYmin% TO yEnd%
+        xs0% = polyEdge(0, y%).x
+        xs1% = polyEdge(1, y%).x - 1 ' one less pixel right to avoid overdraw
+
+        IF xs1% >= xs0% THEN
+
+            xi% = ofs% + xs0% \ 2
+
+            IF xs0% AND 1 THEN
+                c% = vram%(xi%)
+                vram%(xi%) = (c% AND &HFF00) OR colH%
+                xs0% = xs0% + 1
+                xi% = xi% + 1
+            END IF
+            IF NOT xs1% AND 1 THEN
+                xr% = ofs% + xs1% \ 2
+                c% = vram%(xr%)
+                vram%(xr%) = (c% AND &HFF) OR col%
+                xs1% = xs1% - 1
+            END IF
+
+            FOR x% = xs0% TO xs1% STEP 2
+                vram%(xi%) = col16%
+                xi% = xi% + 1
+            NEXT x%
+
+        END IF
+
+    ofs% = ofs% + (SCRWIDTH% \ 2)
     NEXT y%
 
 END SUB
@@ -555,6 +606,7 @@ SUB RenderObject3Dpoly (obj AS Object3D)
 
                     col% = objectPolygons(polyIndex%).col
                     drawEdges col%
+                    'drawEdgesArr col%
                 END IF
             END IF
         END IF
@@ -679,7 +731,7 @@ SUB ResetElementAddIndices
 END SUB
 
 SUB RunScene3D (t!)
-
+'t! = 1
     xt! = 0 'SIN(t!) * 48
     yt! = 0 'SIN(1.5 * t!) * 32
     zt! = 128 '+ SIN(1.25 * t!) * 96
