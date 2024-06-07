@@ -265,15 +265,17 @@ SUB drawEdges (col%)
 
     screenSeg& = VARSEG(vram%(0))
 
-    FOR y% = edgeYmin% TO edgeYmax%
+    FOR y% = edgeYmin% TO edgeYmax% - 1 ' one less edge bottom to avoid overdraw
         xs0% = polyEdge(0, y%).x
         xs1% = polyEdge(1, y%).x
 
         IF xs1% > xs0% THEN
-            DEF SEG = screenSeg& + y% * (SCRWIDTH% \ 16)
-            FOR x% = xs0% TO xs1%
+        DEF SEG = screenSeg& + y% * (SCRWIDTH% \ 16)
+            FOR x% = xs0% TO xs1% - 1   ' one less pixel on the right to avoid overdraw
+                'bg% = PEEK(x% + 4) ' enable and XOR with col% to test for overdraw
                 POKE 4 + x%, col%
             NEXT x%
+            DEF SEG
         END IF
 
     NEXT y%
@@ -424,6 +426,7 @@ END SUB
 SUB PlotPixel (x%, y%, col%)
 
     screenSeg& = VARSEG(vram%(0))
+
     DEF SEG = screenSeg& + y% * (SCRWIDTH% \ 16)
     POKE 4 + x%, col%
 
@@ -679,7 +682,7 @@ SUB RunScene3D (t!)
 
     xt! = 0 'SIN(t!) * 48
     yt! = 0 'SIN(1.5 * t!) * 32
-    zt! = 256 '+ SIN(1.25 * t!) * 96
+    zt! = 128 '+ SIN(1.25 * t!) * 96
    
     SetObjectPosition object(currentObject%), xt!, yt!, zt!
     SetObjectRotation object(currentObject%), .7 * t!, t!, 1.25 * t!
