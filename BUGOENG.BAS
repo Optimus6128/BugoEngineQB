@@ -1,7 +1,8 @@
-DECLARE SUB drawEdgesArr (col%)
+DECLARE SUB ReadLineValues (inp$, out$(), numVals%)
+DECLARE SUB DrawEdgesArr (col%)
 DECLARE SUB WriteVram ()
-DECLARE SUB prepareEdgeList (x0%, y0%, x1%, y1%)
-DECLARE SUB drawEdges (col%)
+DECLARE SUB PrepareEdgeList (x0%, y0%, x1%, y1%)
+DECLARE SUB DrawEdges (col%)
 DECLARE SUB RenderObject3DpolyAlt (obj AS ANY)
 DECLARE SUB RenderObject3Ddots (obj AS ANY)
 DECLARE SUB RenderObject3Dwire (obj AS ANY)
@@ -26,6 +27,7 @@ DECLARE SUB SetObjectPosition (obj AS ANY, px!, py!, pz!)
 DECLARE SUB SetObjectRotation (obj AS ANY, rx!, ry!, rz!)
 DECLARE SUB RenderObject3D (obj AS ANY)
 DECLARE SUB TransformObject3D (obj AS ANY)
+DECLARE SUB AddVertex (x%, y%, z%)
 DECLARE SUB AddTriangleIndices (i0%, i1%, i2%)
 DECLARE SUB ResetElementAddIndices ()
 
@@ -33,7 +35,7 @@ DECLARE SUB InitObject3Dcube (params AS ANY, obj AS ANY)
 DECLARE SUB InitObject3Dsphere (params AS ANY, obj AS ANY)
 DECLARE SUB InitObject3Dtorus (params AS ANY, obj AS ANY)
 DECLARE SUB InitObject3D (params AS ANY, obj AS ANY)
-DECLARE SUB LoadObject3D (objFile$)
+DECLARE SUB LoadObject3D (objFile$, obj AS ANY)
 
 CONST SCRWIDTH% = 320
 CONST SCRHEIGHT% = 200
@@ -47,10 +49,7 @@ CONST BLURSWITCH% = 0   ' blur will overflow in interpreter only compiled exe
 CONST ALTPOLY% = 0
 CONST FPRAST% = 64
 
-' CONST PI! = 3.14159265359#
-' CONST D2R! = 180! / PI
-' CONST ANG256! = (256! * D2R!) / 360!
-
+CONST PI! = 3.14159265359#
 
 CONST maxTempVertices% = 512
 CONST maxVertices% = 2 * maxTempVertices%
@@ -60,12 +59,16 @@ CONST objGenCube% = 0
 CONST objGenDotCube% = 1
 CONST objGenSphere% = 2
 CONST objGenTorus% = 3
-CONST numObjects% = 4
+CONST objLoadTeapot% = 4
+CONST numObjects% = 5
 
 CONST renderTypeDots% = 0
 CONST renderTypeWire% = 1
 CONST renderTypePoly% = 2
 
+DIM SHARED currentObject%
+
+currentObject% = objLoadTeapot%
 
 
 TYPE Vertex3D
@@ -122,6 +125,10 @@ vram%(1) = 200
 
 '$STATIC
 
+DIM SHARED segY%(0 TO SCRHEIGHT% - 1)
+
+DIM SHARED object(0 TO numObjects% - 1) AS Object3D
+
 DIM SHARED screenVertices(0 TO maxTempVertices%) AS Vertex3D
 
 DIM SHARED objectVertices(0 TO maxVertices%) AS Vertex3D
@@ -137,15 +144,12 @@ DIM SHARED currentPolyAdd%
 DIM SHARED edgeYmin%, edgeYmax%
 DIM SHARED polyEdge(0 TO 1, 0 TO SCRHEIGHT% - 1) AS Edge
 
-DIM SHARED object(0 TO numObjects% - 1) AS Object3D
-DIM SHARED currentObject%
-
-currentObject% = objGenCube%
-
 
 InitPrecalcs
 
 SCREEN 13
+
+COLOR 63
 
 SetDefaultPalette
 
@@ -169,7 +173,7 @@ DO WHILE INKEY$ = ""
     RunScene3D (t!)
 
     IF BLURSWITCH% = 1 THEN
-        BlurVram
+        BlurVramX
     END IF
 
     'WaitForVsync
@@ -183,7 +187,6 @@ DO WHILE INKEY$ = ""
 LOOP
 timeEnd! = TIMER
 
-COLOR 31
 PRINT nframe& / (timeEnd! - timeStart!)
 SLEEP
 
@@ -206,6 +209,16 @@ SUB AddTriangleIndices (i0%, i1%, i2%)
 
 END SUB
 
+SUB AddVertex (x%, y%, z%)
+
+    objectVertices(currentVertexAdd%).x = x%
+    objectVertices(currentVertexAdd%).y = y%
+    objectVertices(currentVertexAdd%).z = z%
+
+    currentVertexAdd% = currentVertexAdd% + 1
+
+END SUB
+
 SUB BlurVram
 
     ' Dirty blur two pixels at once (works only if colors are from 0 to 63)
@@ -221,7 +234,7 @@ SUB BlurVramX
 
     ' Dirty blur two pixels at once (works only if colors are from 0 to 127)
     FOR i% = 2 + SCRWIDTH% \ 2 TO 2 + (SCRWIDTH% \ 2) * (SCRHEIGHT% - 1) - 1
-        vram%(i%) = ((vram%(i% - 1) + vram%(i% + 1)) \ 2) AND &H7F7F
+        vram%(i%) = ((vram%(i% - 1) + vram%(i% + 1)) \ 2) AND &H3F3F
     NEXT i%
 
     ClearBlurJunk
@@ -232,7 +245,7 @@ SUB BlurVramY
 
     ' Dirty blur two pixels at once (works only if colors are from 0 to 127)
     FOR i% = 2 + SCRWIDTH2% TO 2 + SCRWIDTH2% * (SCRHEIGHT% - 1) - 1
-        vram%(i%) = ((vram%(i% - SCRWIDTH2%) + vram%(i% + SCRWIDTH2%)) \ 2) AND &H7F7F
+        vram%(i%) = ((vram%(i% - SCRWIDTH2%) + vram%(i% + SCRWIDTH2%)) \ 2) AND &H3F3F
     NEXT i%
 
     ClearBlurJunk
@@ -262,7 +275,7 @@ SUB ClearVram
 
 END SUB
 
-SUB drawEdges (col%)
+SUB DrawEdges (col%)
 
     screenSeg& = VARSEG(vram%(0))
 
@@ -272,7 +285,7 @@ SUB drawEdges (col%)
         xs1% = polyEdge(1, y%).x - 1 ' one less pixel right to avoid overdraw
 
         IF xs1% >= xs0% THEN
-            DEF SEG = screenSeg& + y% * (SCRWIDTH% \ 16)
+            DEF SEG = screenSeg& + segY%(y%)
 
             IF xs0% AND 1 THEN
                 POKE 4 + xs0%, col%
@@ -293,7 +306,7 @@ SUB drawEdges (col%)
 
 END SUB
 
-SUB drawEdgesArr (col%)
+SUB DrawEdgesArr (col%)
 
     colH% = col% * 256
     col16% = colH% OR col%
@@ -372,10 +385,7 @@ SUB InitObject3Dcube (params AS ObjGenParams, obj AS Object3D)
     FOR z% = -1 TO 1 STEP 2
         FOR y% = -1 TO 1 STEP 2
             FOR x% = -1 TO 1 STEP 2
-                objectVertices(currentVertexAdd%).x = x% * halfSize%
-                objectVertices(currentVertexAdd%).y = y% * halfSize%
-                objectVertices(currentVertexAdd%).z = z% * halfSize%
-                currentVertexAdd% = currentVertexAdd% + 1
+                AddVertex x% * halfSize%, y% * halfSize%, z% * halfSize%
             NEXT x%
         NEXT y%
     NEXT z%
@@ -424,10 +434,7 @@ SUB InitObject3DdotCube (params AS ObjGenParams, object AS Object3D)
     FOR z% = -4 TO 3
         FOR y% = -4 TO 3
             FOR x% = -4 TO 3
-                objectVertices(currentVertexAdd%).x = x% * halfSize%
-                objectVertices(currentVertexAdd%).y = y% * halfSize%
-                objectVertices(currentVertexAdd%).z = z% * halfSize%
-                currentVertexAdd% = currentVertexAdd% + 1
+                AddVertex x% * halfSize%, y% * halfSize%, z% * halfSize%
             NEXT x%
         NEXT y%
     NEXT z%
@@ -444,12 +451,18 @@ END SUB
 
 SUB InitPrecalcs
 
+' precalcs to avoid multiply when DEF SEG on vram
+
+    FOR i% = 0 TO SCRHEIGHT% - 1
+        segY%(i%) = i% * 20
+    NEXT i%
+
 ' Just randomize polygon colors for now
 
-    FOR i% = 0 TO maxPolys%
-        c% = 31 + INT(RND * 63)
-        objectPolygons(i%).col = c%
-    NEXT i%
+    FOR i& = 0 TO maxPolys%
+        c% = (32 + ((8 * i&) AND 63)) MOD SHADEMAX%
+        objectPolygons(i&).col = c%
+    NEXT i&
 
 END SUB
 
@@ -465,12 +478,49 @@ SUB InitScene3D
     DIM dotCubeParams AS ObjGenParams
 
     dotCubeParams.index = objGenDotCube%
-    dotCubeParams.size = 24
+    dotCubeParams.size = 16
     InitObject3D dotCubeParams, object(objGenDotCube%)
+
+    LoadObject3D "teapot.plg", object(objLoadTeapot%)
+    object(objLoadTeapot%).renderType = renderTypePoly%
 
 END SUB
 
-SUB LoadObject3D (objFile$)
+SUB LoadObject3D (objFile$, obj AS Object3D)
+
+    DIM values(0 TO 4) AS STRING
+
+    obj.verticesOffset = currentVertexAdd%
+    obj.polyIndicesOffset = currentPolyIndexAdd%
+    obj.lineIndicesOffset = currentLineIndexAdd%
+    obj.polysOffset = currentPolyAdd%
+
+    OPEN objFile$ FOR INPUT AS #1
+
+    LINE INPUT #1, lbuf$
+    ReadLineValues lbuf$, values(), 3
+
+    obj.numVertices = VAL(values(1))
+    obj.numPolys = VAL(values(2))
+    obj.numPolyIndices = obj.numPolys * 3
+    obj.numLineIndices = 0
+
+    FOR i% = 1 TO obj.numVertices
+        LINE INPUT #1, lbuf$
+        ReadLineValues lbuf$, values(), 3
+        AddVertex VAL(values(0)), VAL(values(1)) + 128, VAL(values(2))  ' +128 is a hack to center the teapot, will remove and write function to center dots later
+    NEXT i%
+
+    FOR i% = 1 TO obj.numPolys
+        LINE INPUT #1, lbuf$
+        ReadLineValues lbuf$, values(), 5
+        numPoints% = VAL(values(1))
+        IF numPoints% = 3 THEN
+            AddTriangleIndices VAL(values(2)), VAL(values(3)), VAL(values(4))
+        END IF
+    NEXT i%
+
+    CLOSE #1
 
 END SUB
 
@@ -478,12 +528,12 @@ SUB PlotPixel (x%, y%, col%)
 
     screenSeg& = VARSEG(vram%(0))
 
-    DEF SEG = screenSeg& + y% * (SCRWIDTH% \ 16)
+    DEF SEG = screenSeg& + segY%(y%)
     POKE 4 + x%, col%
 
 END SUB
 
-SUB prepareEdgeList (x0%, y0%, x1%, y1%)
+SUB PrepareEdgeList (x0%, y0%, x1%, y1%)
 
     IF y0% <> y1% THEN
 
@@ -510,6 +560,21 @@ SUB prepareEdgeList (x0%, y0%, x1%, y1%)
         NEXT y%
 
     END IF
+
+END SUB
+
+SUB ReadLineValues (inp$, out$(), numVals%)
+
+    FOR i% = 0 TO numVals% - 1
+        inp$ = LTRIM$(inp$)
+        index% = INSTR(inp$, " ")
+        IF index% > 0 THEN
+            out$(i%) = LEFT$(inp$, index% - 1)
+            inp$ = RIGHT$(inp$, LEN(inp$) - index%)
+        ELSE
+            out$(i%) = inp$
+        END IF
+    NEXT i%
 
 END SUB
 
@@ -600,13 +665,13 @@ SUB RenderObject3Dpoly (obj AS Object3D)
                 IF edgeYmax% > SCRHEIGHT% - 1 THEN edgeYmax% = SCRHEIGHT% - 1
 
                 IF edgeYmax% > edgeYmin% THEN
-                    prepareEdgeList x0%, y0%, x1%, y1%
-                    prepareEdgeList x1%, y1%, x2%, y2%
-                    prepareEdgeList x2%, y2%, x0%, y0%
+                    PrepareEdgeList x0%, y0%, x1%, y1%
+                    PrepareEdgeList x1%, y1%, x2%, y2%
+                    PrepareEdgeList x2%, y2%, x0%, y0%
 
                     col% = objectPolygons(polyIndex%).col
-                    drawEdges col%
-                    'drawEdgesArr col%
+                    DrawEdges col%
+                    'DrawEdgesArr col%
                 END IF
             END IF
         END IF
@@ -666,7 +731,7 @@ SUB RenderObject3DpolyAlt (obj AS Object3D)
             col% = objectPolygons(polyIndex%).col
 
             FOR y% = yMin% TO yMax% - 1
-                DEF SEG = screenSeg& + y% * (SCRWIDTH% \ 16)
+                DEF SEG = screenSeg& + segY%(y%)
                 FOR x% = xMin% TO xMax% - 1
                     IF (y% - y0%) * (x1% - x0%) - (x% - x0%) * (y1% - y0%) <= 0 THEN
                         IF (y% - y1%) * (x2% - x1%) - (x% - x1%) * (y2% - y1%) <= 0 THEN
@@ -731,13 +796,42 @@ SUB ResetElementAddIndices
 END SUB
 
 SUB RunScene3D (t!)
-'t! = 1
+tt! = t!
+t! = 0
+
     xt! = 0 'SIN(t!) * 48
     yt! = 0 'SIN(1.5 * t!) * 32
-    zt! = 128 '+ SIN(1.25 * t!) * 96
-   
+    zt! = 256 '+ SIN(1.25 * t!) * 96
+
+    rx! = .7 * t!
+    ry! = t!
+    rz! = 1.25 * t!
+
+    SELECT CASE currentObject%
+
+    CASE objGenCube%
+        zt! = 128
+
+    CASE objGenDotCube%
+        zt! = 256
+
+    CASE objGenSphere%
+
+    CASE objGenTorus%
+
+    CASE objLoadTeapot%
+        yt! = 0
+        zt! = 720
+        rx! = PI!
+        ry! = 4 * tt!
+        'rz! = 3 * tt!
+
+    CASE ELSE
+
+    END SELECT
+
     SetObjectPosition object(currentObject%), xt!, yt!, zt!
-    SetObjectRotation object(currentObject%), .7 * t!, t!, 1.25 * t!
+    SetObjectRotation object(currentObject%), rx!, ry!, rz!
 
     TransformObject3D object(currentObject%)
     RenderObject3D object(currentObject%)
@@ -751,9 +845,9 @@ OUT &H3C9, 0
 OUT &H3C9, 0
 OUT &H3C9, 0
 FOR i% = 1 TO 127
-    OUT &H3C9, i% \ 2
-    OUT &H3C9, i% \ 2
-    OUT &H3C9, 7
+    OUT &H3C9, (1 * i%) AND 63
+    OUT &H3C9, (.75 * i%) AND 63
+    OUT &H3C9, (2! * i%) AND 63
 NEXT i%
 
 END SUB
