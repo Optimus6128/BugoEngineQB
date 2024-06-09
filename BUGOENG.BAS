@@ -7,6 +7,8 @@ DECLARE SUB RenderObject3DpolyAlt (obj AS ANY)
 DECLARE SUB RenderObject3Ddots (obj AS ANY)
 DECLARE SUB RenderObject3Dwire (obj AS ANY)
 DECLARE SUB RenderObject3Dpoly (obj AS ANY)
+DECLARE SUB SortObject3Dpoly (obj AS ANY)
+DECLARE SUB CenterObjectVertices (obj AS ANY)
 DECLARE SUB AddLineIndices (i0%, i1%)
 DECLARE SUB ClearBlurJunk ()
 DECLARE SUB BlurVram ()
@@ -48,6 +50,19 @@ CONST BLURSWITCH% = 0   ' blur will overflow in interpreter only compiled exe
 
 CONST ALTPOLY% = 0
 CONST FPRAST% = 64
+
+CONST ZBUCKETSIZE% = 16
+CONST ZBUCKETMAX% = 4096
+CONST ZBUCKETS% = ZBUCKETMAX% / ZBUCKETSIZE%
+CONST ZBUCKETPOLYS% = 32
+
+DIM SHARED zBucket%(0 TO ZBUCKETS%, 0 TO ZBUCKETPOLYS%)
+' Poly 0 in ZBUCKETPOLYS% will really be the counter of num polys in list or next poly to add
+' Also, last ZBUCKET (after ZBUCKETS%-1) will be the one whre we stick polygons >= 4096 or that didn't fit in regular buckets for some reason
+
+DIM SHARED minZbucket%
+DIM SHARED maxZbucket%
+
 
 CONST PI! = 3.14159265359#
 
@@ -144,7 +159,6 @@ DIM SHARED currentPolyAdd%
 DIM SHARED edgeYmin%, edgeYmax%
 DIM SHARED polyEdge(0 TO 1, 0 TO SCRHEIGHT% - 1) AS Edge
 
-
 InitPrecalcs
 
 SCREEN 13
@@ -189,6 +203,8 @@ timeEnd! = TIMER
 
 PRINT nframe& / (timeEnd! - timeStart!)
 SLEEP
+
+
 
 SUB AddLineIndices (i0%, i1%)
 
@@ -249,6 +265,41 @@ SUB BlurVramY
     NEXT i%
 
     ClearBlurJunk
+
+END SUB
+
+SUB CenterObjectVertices (obj AS Object3D)
+
+    offset% = obj.verticesOffset
+    n% = obj.numVertices - 1
+
+    minX! = 1000000: maxX! = -1000000
+    minY! = 1000000: maxY! = -1000000
+    minZ! = 1000000: maxZ! = -1000000
+
+    FOR i% = 0 TO n%
+        k% = i% + offset%
+       
+        x! = objectVertices(k%).x
+        y! = objectVertices(k%).y
+        z! = objectVertices(k%).z
+
+        IF x! < minX! THEN minX! = x! ELSE IF x! > maxX! THEN maxX! = x!
+        IF y! < minY! THEN minY! = y! ELSE IF y! > maxY! THEN maxY! = y!
+        IF z! < minZ! THEN minZ! = z! ELSE IF z! > maxZ! THEN maxZ! = z!
+    NEXT i%
+
+    centerX! = (minX! + maxX!) / 2
+    centerY! = (minY! + maxY!) / 2
+    centerZ! = (minZ! + maxZ!) / 2
+
+    FOR i% = 0 TO n%
+        k% = i% + offset%
+
+        objectVertices(k%).x = objectVertices(k%).x - centerX!
+        objectVertices(k%).y = objectVertices(k%).y - centerY!
+        objectVertices(k%).z = objectVertices(k%).z - centerZ!
+    NEXT i%
 
 END SUB
 
@@ -508,7 +559,7 @@ SUB LoadObject3D (objFile$, obj AS Object3D)
     FOR i% = 1 TO obj.numVertices
         LINE INPUT #1, lbuf$
         ReadLineValues lbuf$, values(), 3
-        AddVertex VAL(values(0)), VAL(values(1)) + 128, VAL(values(2))  ' +128 is a hack to center the teapot, will remove and write function to center dots later
+        AddVertex VAL(values(0)), VAL(values(1)), VAL(values(2))
     NEXT i%
 
     FOR i% = 1 TO obj.numPolys
@@ -521,6 +572,8 @@ SUB LoadObject3D (objFile$, obj AS Object3D)
     NEXT i%
 
     CLOSE #1
+
+    CenterObjectVertices obj
 
 END SUB
 
@@ -589,6 +642,7 @@ SUB RenderObject3D (obj AS Object3D)
             RenderObject3Dwire obj
 
         CASE renderTypePoly%
+            SortObject3Dpoly obj
             IF ALTPOLY% = 0 THEN
                 RenderObject3Dpoly obj
             ELSE
@@ -628,22 +682,18 @@ END SUB
 
 SUB RenderObject3Dpoly (obj AS Object3D)
 
-    offset% = obj.polyIndicesOffset
-    n% = offset% + obj.numPolyIndices - 1
+    indexOffset% = obj.polyIndicesOffset
+    polyOffset% = obj.polysOffset
 
-    polyIndex% = obj.polysOffset
+    FOR zSlot% = maxZbucket% TO minZbucket% STEP -1
+        count% = zBucket%(zSlot%, 0)
+        FOR n% = 1 TO count%
+            i% = zBucket%(zSlot%, n%)
 
-    FOR i% = offset% TO n% STEP 3
+            i0% = objectPolyIndices%(i%)
+            i1% = objectPolyIndices%(i% + 1)
+            i2% = objectPolyIndices%(i% + 2)
 
-        i0% = objectPolyIndices%(i%)
-        i1% = objectPolyIndices%(i% + 1)
-        i2% = objectPolyIndices%(i% + 2)
-
-        z0% = screenVertices(i0%).z
-        z1% = screenVertices(i1%).z
-        z2% = screenVertices(i2%).z
-
-        IF z0% > 0 AND z1% > 0 AND z2% > 0 THEN
             x0% = screenVertices(i0%).x
             x1% = screenVertices(i1%).x
             x2% = screenVertices(i2%).x
@@ -651,33 +701,29 @@ SUB RenderObject3Dpoly (obj AS Object3D)
             y1% = screenVertices(i1%).y
             y2% = screenVertices(i2%).y
 
-            a% = (x0% - x1%) * (y2% - y1%) - (x2% - x1%) * (y0% - y1%)
-            IF a% >= 0 THEN
+            min% = y0%
+            max% = min%
+            IF y1% < min% THEN min% = y1% ELSE IF y1% > max% THEN max% = y1%
+            IF y2% < min% THEN min% = y2% ELSE IF y2% > max% THEN max% = y2%
+            edgeYmin% = min%
+            edgeYmax% = max%
 
-                min% = y0%
-                max% = min%
-                IF y1% < min% THEN min% = y1% ELSE IF y1% > max% THEN max% = y1%
-                IF y2% < min% THEN min% = y2% ELSE IF y2% > max% THEN max% = y2%
-                edgeYmin% = min%
-                edgeYmax% = max%
+            IF edgeYmin% < 0 THEN edgeYmin% = 0
+            IF edgeYmax% > SCRHEIGHT% - 1 THEN edgeYmax% = SCRHEIGHT% - 1
 
-                IF edgeYmin% < 0 THEN edgeYmin% = 0
-                IF edgeYmax% > SCRHEIGHT% - 1 THEN edgeYmax% = SCRHEIGHT% - 1
+            IF edgeYmax% > edgeYmin% THEN
+                PrepareEdgeList x0%, y0%, x1%, y1%
+                PrepareEdgeList x1%, y1%, x2%, y2%
+                PrepareEdgeList x2%, y2%, x0%, y0%
 
-                IF edgeYmax% > edgeYmin% THEN
-                    PrepareEdgeList x0%, y0%, x1%, y1%
-                    PrepareEdgeList x1%, y1%, x2%, y2%
-                    PrepareEdgeList x2%, y2%, x0%, y0%
-
-                    col% = objectPolygons(polyIndex%).col
-                    DrawEdges col%
-                    'DrawEdgesArr col%
-                END IF
+                polyIndex% = polyOffset% + (i% - indexOffset%) \ 3  ' I will think if it's worth it storing this too or recalculating. Probably not.
+                col% = objectPolygons(polyIndex%).col
+                DrawEdges col%
+                'DrawEdgesArr col%
             END IF
-        END IF
 
-        polyIndex% = polyIndex% + 1
-    NEXT i%
+        NEXT n%
+    NEXT zSlot%
 
 END SUB
 
@@ -685,22 +731,18 @@ SUB RenderObject3DpolyAlt (obj AS Object3D)
 
     screenSeg& = VARSEG(vram%(0))
 
-    offset% = obj.polyIndicesOffset
-    n% = offset% + obj.numPolyIndices - 1
+    indexOffset% = obj.polyIndicesOffset
+    polyOffset% = obj.polysOffset
 
-    polyIndex% = obj.polysOffset
+    FOR zSlot% = maxZbucket% TO minZbucket% STEP -1
+        count% = zBucket%(zSlot%, 0)
+        FOR n% = 1 TO count%
+            i% = zBucket%(zSlot%, n%)
 
-    FOR i% = offset% TO n% STEP 3
+            i0% = objectPolyIndices%(i%)
+            i1% = objectPolyIndices%(i% + 1)
+            i2% = objectPolyIndices%(i% + 2)
 
-        i0% = objectPolyIndices%(i%)
-        i1% = objectPolyIndices%(i% + 1)
-        i2% = objectPolyIndices%(i% + 2)
-
-        z0% = screenVertices(i0%).z
-        z1% = screenVertices(i1%).z
-        z2% = screenVertices(i2%).z
-
-        IF z0% > 0 AND z1% > 0 AND z2% > 0 THEN
             x0% = screenVertices(i0%).x
             y0% = screenVertices(i0%).y
             x1% = screenVertices(i1%).x
@@ -728,6 +770,7 @@ SUB RenderObject3DpolyAlt (obj AS Object3D)
             IF xMax% > SCRWIDTH% THEN xMax% = SCRWIDTH%
             IF yMax% > SCRHEIGHT% THEN yMax% = SCRHEIGHT%
 
+            polyIndex% = polyOffset% + (i% - indexOffset%) \ 3  ' I will think if it's worth it storing this too or recalculating. Probably not.
             col% = objectPolygons(polyIndex%).col
 
             FOR y% = yMin% TO yMax% - 1
@@ -743,10 +786,8 @@ SUB RenderObject3DpolyAlt (obj AS Object3D)
                 NEXT x%
             NEXT y%
 
-        END IF
-
-        polyIndex% = polyIndex% + 1
-    NEXT i%
+        NEXT n%
+    NEXT zSlot%
 
 END SUB
 
@@ -797,7 +838,7 @@ END SUB
 
 SUB RunScene3D (t!)
 tt! = t!
-t! = 0
+'t! = 0
 
     xt! = 0 'SIN(t!) * 48
     yt! = 0 'SIN(1.5 * t!) * 32
@@ -821,7 +862,7 @@ t! = 0
 
     CASE objLoadTeapot%
         yt! = 0
-        zt! = 720
+        zt! = 1024
         rx! = PI!
         ry! = 4 * tt!
         'rz! = 3 * tt!
@@ -868,6 +909,55 @@ SUB SetObjectRotation (obj AS Object3D, rx!, ry!, rz!)
 
 END SUB
 
+SUB SortObject3Dpoly (obj AS Object3D)
+
+    ' Reset ZBUCKET indices
+    FOR i% = 0 TO ZBUCKETS%
+        zBucket%(i%, 0) = 0
+    NEXT i%
+
+    minZbucket% = ZBUCKETS%
+    maxZbucket% = 0
+
+    offset% = obj.polyIndicesOffset
+    n% = offset% + obj.numPolyIndices - 1
+
+    FOR i% = offset% TO n% STEP 3
+
+        i0% = objectPolyIndices%(i%)
+        i1% = objectPolyIndices%(i% + 1)
+        i2% = objectPolyIndices%(i% + 2)
+
+        z0% = screenVertices(i0%).z
+        z1% = screenVertices(i1%).z
+        z2% = screenVertices(i2%).z
+
+        IF z0% > 0 AND z1% > 0 AND z2% > 0 THEN
+            x0% = screenVertices(i0%).x
+            x1% = screenVertices(i1%).x
+            x2% = screenVertices(i2%).x
+            y0% = screenVertices(i0%).y
+            y1% = screenVertices(i1%).y
+            y2% = screenVertices(i2%).y
+
+            a% = (x0% - x1%) * (y2% - y1%) - (x2% - x1%) * (y0% - y1%)
+            IF a% >= 0 THEN
+                zIndex% = (z0% + z1% + z2%) \ (3 * ZBUCKETSIZE%)
+                IF zIndex% > ZBUCKETS% THEN zIndex% = ZBUCKETS%
+                slot% = zBucket%(zIndex%, 0) + 1
+                IF slot% <= ZBUCKETPOLYS% THEN
+                    zBucket%(zIndex%, slot%) = i%
+                    zBucket%(zIndex%, 0) = slot%
+                    IF zIndex% < minZbucket% THEN minZbucket% = zIndex%
+                    IF zIndex% > maxZbucket% THEN maxZbucket% = zIndex%
+                END IF
+            END IF
+        END IF
+
+    NEXT i%
+
+END SUB
+
 SUB TransformObject3D (obj AS Object3D)
 
     CONST proj! = 256
@@ -901,7 +991,6 @@ SUB TransformObject3D (obj AS Object3D)
 
     offset% = obj.verticesOffset
     n% = obj.numVertices - 1
-
     FOR i% = 0 TO n%
 
         k% = i% + offset%
@@ -921,7 +1010,6 @@ SUB TransformObject3D (obj AS Object3D)
         END IF
 
     NEXT i%
-
 
 END SUB
 
