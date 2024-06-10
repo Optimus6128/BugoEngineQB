@@ -1,3 +1,7 @@
+DECLARE SUB AddVertexNormal (x!, y!, z!)
+DECLARE SUB AddPolyNormal (x!, y!, z!)
+DECLARE SUB CalcObjectPolyNormals (obj AS ANY)
+DECLARE SUB DisplayPalette ()
 DECLARE SUB GenObject3Dcube (params AS ANY, obj AS ANY)
 DECLARE SUB GenObject3DdotCube (params AS ANY, object AS ANY)
 DECLARE SUB GenObject3Dsphere (params AS ANY, obj AS ANY)
@@ -8,7 +12,6 @@ DECLARE SUB FlipPolygonOrientation (obj AS ANY)
 DECLARE SUB FindObjectScaleToFit (obj AS ANY, desiredRange!, scale!)
 DECLARE SUB CalcObjectVerticesRange (obj AS ANY, range AS ANY)
 DECLARE SUB ScaleObjectVertices (obj AS ANY, scale!)
-DECLARE SUB DrawPolyAlt (i%, polyIndex%)
 DECLARE SUB DrawPoly (i%, polyIndex%)
 DECLARE SUB SetCurrentObject (objNum%, objFile$)
 DECLARE SUB ReadLineValues (inp$, out$(), numVals%)
@@ -65,11 +68,8 @@ CONST PI! = 3.14159265359#
 
 ' ---- Engine Stuff ----
 
-CONST SHADEMAX% = 63
-
 CONST BLURSWITCH% = 0   ' blur will overflow in interpreter only compiled exe
 
-CONST ALTPOLY% = 0      ' 1 is slow check if pixel is inside triangle
 CONST FPRAST% = 64
 
 CONST ZBUCKETSIZE% = 16
@@ -88,7 +88,7 @@ DIM SHARED minZbucket%
 DIM SHARED maxZbucket%
 
 CONST maxTempVertices% = 768
-CONST maxVertices% = 2 * maxTempVertices%
+CONST maxVertices% = 1 * maxTempVertices%
 CONST maxPolys% = 2 * maxVertices%
 
 
@@ -154,6 +154,8 @@ TYPE Object3D
     polyIndicesOffset AS INTEGER
     lineIndicesOffset AS INTEGER
     polysOffset AS INTEGER
+    polyNormalsOffset AS INTEGER
+    vertexNormalsOffset AS INTEGER
 
     numVertices AS INTEGER
     numPolyIndices AS INTEGER
@@ -185,21 +187,25 @@ vram%(1) = 200
 
 '$STATIC
 
-DIM SHARED segY%(0 TO SCRHEIGHT% - 1)
-
 DIM SHARED object(0 TO numObjects% - 1) AS Object3D
 
 DIM SHARED screenVertices(0 TO maxTempVertices%) AS Vertex3D
+DIM SHARED transformedVertexNormals(0 TO maxTempVertices%) AS Vector3D
 
 DIM SHARED objectVertices(0 TO maxVertices%) AS Vertex3D
 DIM SHARED objectPolyIndices%(0 TO 3 * maxPolys%)
 DIM SHARED objectLineIndices%(0 TO 6 * maxPolys%)
 DIM SHARED objectPolygons(0 TO maxPolys%) AS PolyData
 
+DIM SHARED objectPolyNormals(0 TO maxPolys%) AS Vector3D
+DIM SHARED objectVertexNormals(0 TO maxVertices%) AS Vector3D
+
 DIM SHARED currentVertexAdd%
 DIM SHARED currentPolyIndexAdd%
 DIM SHARED currentLineIndexAdd%
 DIM SHARED currentPolyAdd%
+DIM SHARED currentPolyNormalAdd%
+DIM SHARED currentVertexNormalAdd%
 
 DIM SHARED edgeYmin%, edgeYmax%
 DIM SHARED polyEdge(0 TO 1, 0 TO SCRHEIGHT% - 1) AS Edge
@@ -242,6 +248,8 @@ DO WHILE INKEY$ = ""
 
     WriteVram
 
+    'DisplayPalette
+
     'PRINT freeMem&
 
     t! = t! + .01
@@ -252,12 +260,24 @@ timeEnd! = TIMER
 PRINT nframe& / (timeEnd! - timeStart!)
 SLEEP
 
+
+
 SUB AddLineIndices (i0%, i1%)
 
     objectLineIndices%(currentLineIndexAdd%) = i0%
     objectLineIndices%(currentLineIndexAdd% + 1) = i1%
 
     currentLineIndexAdd% = currentLineIndexAdd% + 2
+
+END SUB
+
+SUB AddPolyNormal (x!, y!, z!)
+
+    objectPolyNormals(currentPolyNormalAdd%).x = x!
+    objectPolyNormals(currentPolyNormalAdd%).y = y!
+    objectPolyNormals(currentPolyNormalAdd%).z = z!
+
+    currentPolyNormalAdd% = currentPolyNormalAdd% + 1
 
 END SUB
 
@@ -278,6 +298,16 @@ SUB AddVertex (x%, y%, z%)
     objectVertices(currentVertexAdd%).z = z%
 
     currentVertexAdd% = currentVertexAdd% + 1
+
+END SUB
+
+SUB AddVertexNormal (x!, y!, z!)
+
+    objectVertexNormals(currentVertexNormalAdd%).x = x!
+    objectVertexNormals(currentVertexNormalAdd%).y = y!
+    objectVertexNormals(currentVertexNormalAdd%).z = z!
+
+    currentVertexNormalAdd% = currentVertexNormalAdd% + 1
 
 END SUB
 
@@ -314,6 +344,35 @@ SUB BlurVramY
 
 END SUB
 
+SUB CalcObjectPolyNormals (obj AS Object3D)
+
+    offset% = obj.polyIndicesOffset
+    n% = offset% + obj.numPolyIndices - 1
+
+    FOR i% = offset% TO n% STEP 3
+
+        i0% = objectPolyIndices%(i%)
+        i1% = objectPolyIndices%(i% + 1)
+        i2% = objectPolyIndices%(i% + 2)
+
+        x0! = screenVertices(i0%).x
+        x1! = screenVertices(i1%).x
+        x2! = screenVertices(i2%).x
+
+        y0! = screenVertices(i0%).y
+        y1! = screenVertices(i1%).y
+        y2! = screenVertices(i2%).y
+
+        z0! = screenVertices(i0%).z
+        z1! = screenVertices(i1%).z
+        z2! = screenVertices(i2%).z
+
+        ' CROSS then NORMALIZE
+
+    NEXT i%
+
+END SUB
+
 SUB CalcObjectVerticesRange (obj AS Object3D, range AS Range3D)
 
     offset% = obj.verticesOffset
@@ -325,7 +384,7 @@ SUB CalcObjectVerticesRange (obj AS Object3D, range AS Range3D)
 
     FOR i% = 0 TO n%
         k% = i% + offset%
-      
+
         x! = objectVertices(k%).x
         y! = objectVertices(k%).y
         z! = objectVertices(k%).z
@@ -389,9 +448,25 @@ SUB ClearVram
 
 END SUB
 
+SUB DisplayPalette
+
+    FOR y% = 0 TO 55
+        DEF SEG = &HA000 + y% * 20
+        FOR x% = 0 TO 256
+            IF y% < 50 THEN
+                POKE x%, x%
+            ELSE
+                IF (x% AND 63) = 0 THEN POKE x%, 127
+            END IF
+        NEXT x%
+    NEXT y%
+
+END SUB
+
 SUB DrawEdges (col%)
 
     screenSeg& = VARSEG(vram%(0))
+    ys% = edgeYmin% * (SCRWIDTH% \ 16)
 
     yEnd% = edgeYmax% - 1 ' one less edge bottom to avoid overdraw
     FOR y% = edgeYmin% TO yEnd%
@@ -402,7 +477,7 @@ SUB DrawEdges (col%)
         IF xs1% > SCRWIDTH% - 1 THEN xs1% = SCRWIDTH% - 1
 
         IF xs1% >= xs0% THEN
-            DEF SEG = screenSeg& + segY%(y%)
+            DEF SEG = screenSeg& + ys%
 
             IF xs0% AND 1 THEN
                 POKE 4 + xs0%, col%
@@ -419,6 +494,7 @@ SUB DrawEdges (col%)
             NEXT x%
         END IF
 
+        ys% = ys% + (SCRWIDTH% \ 16)
     NEXT y%
 
 END SUB
@@ -498,58 +574,6 @@ SUB DrawPoly (i%, polyIndex%)
 
 END SUB
 
-SUB DrawPolyAlt (i%, polyIndex%)
-
-    i0% = objectPolyIndices%(i%)
-    i1% = objectPolyIndices%(i% + 1)
-    i2% = objectPolyIndices%(i% + 2)
-
-    x0% = screenVertices(i0%).x
-    y0% = screenVertices(i0%).y
-    x1% = screenVertices(i1%).x
-    y1% = screenVertices(i1%).y
-    x2% = screenVertices(i2%).x
-    y2% = screenVertices(i2%).y
-
-    xMin% = x0%
-    yMin% = y0%
-    xMax% = xMin%
-    yMax% = yMin%
-
-    IF x1% < xMin% THEN xMin% = x1%
-    IF x1% > xMax% THEN xMax% = x1%
-    IF y1% < yMin% THEN yMin% = y1%
-    IF y1% > yMax% THEN yMax% = y1%
-
-    IF x2% < xMin% THEN xMin% = x2%
-    IF x2% > xMax% THEN xMax% = x2%
-    IF y2% < yMin% THEN yMin% = y2%
-    IF y2% > yMax% THEN yMax% = y2%
-
-    IF xMin% < 0 THEN xMin% = 0
-    IF yMin% < 0 THEN yMin% = 0
-    IF xMax% > SCRWIDTH% THEN xMax% = SCRWIDTH%
-    IF yMax% > SCRHEIGHT% THEN yMax% = SCRHEIGHT%
-
-    col% = objectPolygons(polyIndex%).col
-
-    screenSeg& = VARSEG(vram%(0))
-
-    FOR y% = yMin% TO yMax% - 1
-        DEF SEG = screenSeg& + segY%(y%)
-        FOR x% = xMin% TO xMax% - 1
-            IF (y% - y0%) * (x1% - x0%) - (x% - x0%) * (y1% - y0%) <= 0 THEN
-                IF (y% - y1%) * (x2% - x1%) - (x% - x1%) * (y2% - y1%) <= 0 THEN
-                    IF (y% - y2%) * (x0% - x2%) - (x% - x2%) * (y0% - y2%) <= 0 THEN
-                        POKE 4 + x%, col%
-                    END IF
-                END IF
-            END IF
-        NEXT x%
-    NEXT y%
-
-END SUB
-
 SUB FindObjectScaleToFit (obj AS Object3D, desiredRange!, scale!)
 
     DIM range AS Range3D
@@ -585,6 +609,8 @@ SUB GenObject3D (params AS ObjGenParams, obj AS Object3D)
     obj.polyIndicesOffset = currentPolyIndexAdd%
     obj.lineIndicesOffset = currentLineIndexAdd%
     obj.polysOffset = currentPolyAdd%
+    obj.polyNormalsOffset = currentPolyNormalAdd%
+    obj.vertexNormalsOffset = currentVertexNormalAdd%
 
     SELECT CASE params.index
        
@@ -684,16 +710,14 @@ END SUB
 
 SUB InitPrecalcs
 
-' precalcs to avoid multiply when DEF SEG on vram
-
-    FOR i% = 0 TO SCRHEIGHT% - 1
-        segY%(i%) = i% * 20
-    NEXT i%
-
 ' Just randomize polygon colors for now
 
     FOR i& = 0 TO maxPolys%
-        c% = (32 + ((8 * i&) AND 63)) MOD SHADEMAX%
+        c% = (32 + ((16 * i&) AND 63)) AND 255
+        'c% = (8 * i&) AND 255
+
+        IF BLURSWITCH% = 1 THEN c% = c% AND 63
+
         objectPolygons(i&).col = c%
     NEXT i&
 
@@ -757,6 +781,8 @@ SUB LoadObject3D (objFile$, obj AS Object3D)
     obj.polyIndicesOffset = currentPolyIndexAdd%
     obj.lineIndicesOffset = currentLineIndexAdd%
     obj.polysOffset = currentPolyAdd%
+    obj.polyNormalsOffset = currentPolyNormalAdd%
+    obj.vertexNormalsOffset = currentVertexNormalAdd%
 
     OPEN objFile$ FOR INPUT AS #1
 
@@ -799,7 +825,7 @@ SUB PlotPixel (x%, y%, col%)
 
     screenSeg& = VARSEG(vram%(0))
 
-    DEF SEG = screenSeg& + segY%(y%)
+    DEF SEG = screenSeg& + y% * 20
     POKE 4 + x%, col%
 
 END SUB
@@ -893,11 +919,7 @@ SUB RenderObject3Ddots (obj AS Object3D)
             y% = screenVertices(i%).y
 
             IF x% >= 0 AND x% < SCRWIDTH% AND y% >= 0 AND y% < SCRHEIGHT% THEN
-                'c% = (512 - z%) \ 8
-                'IF c% < 0 THEN c% = 0
-                'IF c% > SHADEMAX% THEN c% = SHADEMAX%
-
-                PlotPixel x%, y%, SHADEMAX%
+                PlotPixel x%, y%, 63
             END IF
         END IF
 
@@ -916,12 +938,7 @@ SUB RenderObject3Dpoly (obj AS Object3D)
             i% = zBucket%(zSlot%, n%)
             polyIndex% = polyOffset% + (i% - indexOffset%) \ 3  ' I will think if it's worth it storing this too or recalculating. Probably not.
 
-            IF ALTPOLY% = 0 THEN
-                DrawPoly i%, polyIndex%
-            ELSE
-                DrawPolyAlt i%, polyIndex%
-            END IF
-
+            DrawPoly i%, polyIndex%
         NEXT n%
     NEXT zSlot%
 
@@ -930,11 +947,7 @@ SUB RenderObject3Dpoly (obj AS Object3D)
         i% = zBucketLeftovers%(n%)
         polyIndex% = polyOffset% + (i% - indexOffset%) \ 3
 
-        IF ALTPOLY% = 0 THEN
-            DrawPoly i%, polyIndex%
-        ELSE
-            DrawPolyAlt i%, polyIndex%
-        END IF
+        DrawPoly i%, polyIndex%
     NEXT n%
 
 END SUB
@@ -966,7 +979,7 @@ SUB RenderObject3Dwire (obj AS Object3D)
                 x% = (x0% * t% + x1% * (pointsBetween% - t%)) \ pointsBetween%
                 y% = (y0% * t% + y1% * (pointsBetween% - t%)) \ pointsBetween%
                 IF x% >= 0 AND x% < SCRWIDTH% AND y% >= 0 AND y% < SCRHEIGHT% THEN
-                    PlotPixel x%, y%, SHADEMAX%
+                    PlotPixel x%, y%, 63
                 END IF
             NEXT t%
         END IF
@@ -981,12 +994,12 @@ SUB ResetElementAddIndices
     currentPolyIndexAdd% = 0
     currentLineIndexAdd% = 0
     currentPolyAdd% = 0
+    currentPolyNormalAdd% = 0
+    currentVertexNormalAdd% = 0
 
 END SUB
 
 SUB RunScene3D (t!)
-tt! = t!
-'t! = 0
 
     xt! = 0 'SIN(t!) * 48
     yt! = 0 'SIN(1.5 * t!) * 32
@@ -1017,14 +1030,13 @@ tt! = t!
             yt! = 0
             zt! = 1024
             rx! = PI!
-            ry! = 4 * tt!
-            'rz! = 3 * tt!
+            ry! = 4 * t!
 
         CASE objLoadMask%
-            zt! = 160 + SIN(4 * tt!) * 48
-            rx! = -PI! / 2 + SIN(6 * tt!) * .75
+            zt! = 160 + SIN(4 * t!) * 48
+            rx! = -PI! / 2 + SIN(6 * t!) * .75
             ry! = PI!
-            rz! = SIN(8 * tt!) * .75
+            rz! = SIN(8 * t!) * .75
 
         CASE ELSE
 
@@ -1067,10 +1079,16 @@ OUT &H3C9, 0
 OUT &H3C9, 0
 OUT &H3C9, 0
 FOR i% = 1 TO 127
-    OUT &H3C9, (1 * i%) AND 63
-    OUT &H3C9, (.75 * i%) AND 63
-    OUT &H3C9, (2! * i%) AND 63
+    OUT &H3C9, (1 * i% \ 2) AND 63
+    OUT &H3C9, (.75 * i% \ 2) AND 63
+    OUT &H3C9, (2 * i% \ 2) AND 63
 NEXT i%
+FOR i% = 128 TO 255
+    OUT &H3C9, (2 * (i% - 128) \ 2) AND 63
+    OUT &H3C9, (1 * (i% - 128) \ 2) AND 63
+    OUT &H3C9, (.75 * (i% - 128) \ 2) AND 63
+NEXT i%
+
 
 END SUB
 
