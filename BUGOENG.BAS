@@ -1,16 +1,16 @@
-DECLARE SUB ReadLineStringFromPlg (fileHandle%, bufDst$)
-DECLARE SUB FlipPolygonOrientation (obj AS ANY)
 DECLARE SUB GenObject3Dcube (params AS ANY, obj AS ANY)
 DECLARE SUB GenObject3DdotCube (params AS ANY, object AS ANY)
 DECLARE SUB GenObject3Dsphere (params AS ANY, obj AS ANY)
 DECLARE SUB GenObject3Dtorus (params AS ANY, obj AS ANY)
 DECLARE SUB GenObject3D (params AS ANY, obj AS ANY)
+DECLARE SUB ReadLineStringFromPlg (fileHandle%, bufDst$)
+DECLARE SUB FlipPolygonOrientation (obj AS ANY)
 DECLARE SUB FindObjectScaleToFit (obj AS ANY, desiredRange!, scale!)
 DECLARE SUB CalcObjectVerticesRange (obj AS ANY, range AS ANY)
 DECLARE SUB ScaleObjectVertices (obj AS ANY, scale!)
 DECLARE SUB DrawPolyAlt (i%, polyIndex%)
 DECLARE SUB DrawPoly (i%, polyIndex%)
-DECLARE SUB SetCurrentObject (objNum%, mustGen%, mustLoad%)
+DECLARE SUB SetCurrentObject (objNum%, objFile$)
 DECLARE SUB ReadLineValues (inp$, out$(), numVals%)
 DECLARE SUB DrawEdgesArr (col%)
 DECLARE SUB WriteVram ()
@@ -63,7 +63,6 @@ CONST TRUE% = 1
 
 CONST PI! = 3.14159265359#
 
-
 ' ---- Engine Stuff ----
 
 CONST SHADEMAX% = 63
@@ -96,8 +95,7 @@ CONST maxPolys% = 2 * maxVertices%
 ' ---- Object Selector ----
 
 DIM SHARED currentObject%
-DIM SHARED objectMustLoad%
-DIM SHARED objectMustGen%
+DIM SHARED objectLoadFile$
 
 CONST objGenCube% = 0
 CONST objGenDotCube% = 1
@@ -112,8 +110,17 @@ CONST renderTypeDots% = 0
 CONST renderTypeWire% = 1
 CONST renderTypePoly% = 2
 
-SetCurrentObject objLoadTest%, FALSE%, TRUE%
-'SetCurrentObject objGenDotCube%, TRUE%, FALSE%
+
+CLS
+FILES "*.plg"
+PRINT
+INPUT "Load: ", objFile$
+
+IF objFile$ = "" THEN
+    SetCurrentObject objGenCube%, ""
+ELSE
+    SetCurrentObject objLoadTest%, objFile$
+END IF
 
 
 ' ---- Engine Data Types ----
@@ -225,7 +232,7 @@ DO WHILE INKEY$ = ""
 
     IF BLURSWITCH% = 0 THEN ClearVram
 
-    RunScene3D (4 * t!)
+    RunScene3D (2 * t!)
 
     IF BLURSWITCH% = 1 THEN
         BlurVramX
@@ -390,6 +397,9 @@ SUB DrawEdges (col%)
     FOR y% = edgeYmin% TO yEnd%
         xs0% = polyEdge(0, y%).x
         xs1% = polyEdge(1, y%).x - 1 ' one less pixel right to avoid overdraw
+
+        IF xs0% < 0 THEN xs0% = 0
+        IF xs1% > SCRWIDTH% - 1 THEN xs1% = SCRWIDTH% - 1
 
         IF xs1% >= xs0% THEN
             DEF SEG = screenSeg& + segY%(y%)
@@ -712,28 +722,21 @@ SUB InitScene3D
         CASE objGenTorus%
 
         CASE objLoadTest%
-            objFile$ = "teapot.plg"
-            'mustFlipPolygonOrientation% = TRUE%
-            'object(currentObject%).renderType = renderTypeDots%
 
         CASE objLoadTeapot%
-            objFile$ = "teapot.plg"
 
         CASE objLoadMask%
-            objFile$ = "mask.plg"
 
         CASE ELSE
 
     END SELECT
 
 
-    IF objectMustGen% = TRUE% THEN
+    IF objectLoadFile$ = "" THEN
         genParams.index = currentObject%
         GenObject3D genParams, object(currentObject%)
-    END IF
-
-    IF objectMustLoad% = TRUE% THEN
-        IF objFile$ <> "" THEN LoadObject3D objFile$, object(currentObject%)
+    ELSE
+        LoadObject3D objectLoadFile$, object(currentObject%)
 
         FindObjectScaleToFit object(currentObject%), defaultScaleRange!, scaleValue!
         ScaleObjectVertices object(currentObject%), scaleValue!
@@ -996,7 +999,9 @@ tt! = t!
     SELECT CASE currentObject%
 
         CASE objGenCube%
-            zt! = 128
+            zt! = 160
+            xt! = SIN(.5 * t!) * 64
+            yt! = SIN(.75 * t!) * 64
 
         CASE objGenDotCube%
             zt! = 256
@@ -1048,11 +1053,10 @@ SUB ScaleObjectVertices (obj AS Object3D, scale!)
 
 END SUB
 
-SUB SetCurrentObject (objNum%, mustGen%, mustLoad%)
+SUB SetCurrentObject (objNum%, objFile$)
 
     currentObject% = objNum%
-    objectMustGen% = mustGen%
-    objectMustLoad% = mustLoad%
+    objectLoadFile$ = objFile$
 
 END SUB
 
@@ -1118,8 +1122,14 @@ SUB SortObject3Dpoly (obj AS Object3D)
             y1% = screenVertices(i1%).y
             y2% = screenVertices(i2%).y
 
-            a% = (x0% - x1%) * (y2% - y1%) - (x2% - x1%) * (y0% - y1%)
-            IF a% >= 0 THEN
+            ' Will need to investigate if it affects performance that I use LONG INT to avoid certain overflows
+            ' If polygon numbers are too little, problaby not affecting much
+            dx0& = x0% - x1%
+            dy0& = y2% - y1%
+            dx1& = x2% - x1%
+            dy1& = y0% - y1%
+            a& = dx0& * dy0& - dx1& * dy1&
+            IF a& >= 0 THEN
                 zIndex% = (z0% + z1% + z2%) \ (3 * ZBUCKETSIZE%)
                 IF zIndex% > ZBUCKETS% THEN zIndex% = ZBUCKETS%
                 slot% = zBucket%(zIndex%, 0) + 1
