@@ -1,3 +1,12 @@
+DECLARE SUB ReadLineStringFromPlg (fileHandle%, bufDst$)
+DECLARE SUB FlipPolygonOrientation (obj AS ANY)
+DECLARE SUB GenObject3Dcube (params AS ANY, obj AS ANY)
+DECLARE SUB GenObject3DdotCube (params AS ANY, object AS ANY)
+DECLARE SUB GenObject3Dsphere (params AS ANY, obj AS ANY)
+DECLARE SUB GenObject3Dtorus (params AS ANY, obj AS ANY)
+DECLARE SUB GenObject3D (params AS ANY, obj AS ANY)
+DECLARE SUB FindObjectScaleToFit (obj AS ANY, desiredRange!, scale!)
+DECLARE SUB CalcObjectVerticesRange (obj AS ANY, range AS ANY)
 DECLARE SUB ScaleObjectVertices (obj AS ANY, scale!)
 DECLARE SUB DrawPolyAlt (i%, polyIndex%)
 DECLARE SUB DrawPoly (i%, polyIndex%)
@@ -19,7 +28,6 @@ DECLARE SUB BlurVramX ()
 DECLARE SUB BlurVramY ()
 DECLARE SUB RunScene3D (t!)
 DECLARE SUB InitScene3D ()
-DECLARE SUB InitObject3DdotCube (params AS ANY, obj AS ANY)
 DECLARE SUB SetDefaultPalette ()
 DECLARE SUB InitPrecalcs ()
 DECLARE SUB ClearBuffer (bufferNum%)
@@ -155,6 +163,10 @@ TYPE Edge
     x AS INTEGER
 END TYPE
 
+TYPE Range3D
+    min AS Vector3D
+    max AS Vector3D
+END TYPE
 
 ' ---- Main Arrays ----
 
@@ -213,7 +225,7 @@ DO WHILE INKEY$ = ""
 
     IF BLURSWITCH% = 0 THEN ClearVram
 
-    RunScene3D (t!)
+    RunScene3D (4 * t!)
 
     IF BLURSWITCH% = 1 THEN
         BlurVramX
@@ -295,7 +307,7 @@ SUB BlurVramY
 
 END SUB
 
-SUB CenterObjectVertices (obj AS Object3D)
+SUB CalcObjectVerticesRange (obj AS Object3D, range AS Range3D)
 
     offset% = obj.verticesOffset
     n% = obj.numVertices - 1
@@ -306,7 +318,7 @@ SUB CenterObjectVertices (obj AS Object3D)
 
     FOR i% = 0 TO n%
         k% = i% + offset%
-       
+      
         x! = objectVertices(k%).x
         y! = objectVertices(k%).y
         z! = objectVertices(k%).z
@@ -316,9 +328,26 @@ SUB CenterObjectVertices (obj AS Object3D)
         IF z! < minZ! THEN minZ! = z! ELSE IF z! > maxZ! THEN maxZ! = z!
     NEXT i%
 
-    centerX! = (minX! + maxX!) / 2
-    centerY! = (minY! + maxY!) / 2
-    centerZ! = (minZ! + maxZ!) / 2
+    range.min.x = minX!
+    range.max.x = maxX!
+    range.min.y = minY!
+    range.max.y = maxY!
+    range.min.z = minZ!
+    range.max.z = maxZ!
+
+END SUB
+
+SUB CenterObjectVertices (obj AS Object3D)
+
+    offset% = obj.verticesOffset
+    n% = obj.numVertices - 1
+
+    DIM range AS Range3D
+    CalcObjectVerticesRange obj, range
+
+    centerX! = (range.min.x + range.max.x) / 2
+    centerY! = (range.min.y + range.max.y) / 2
+    centerZ! = (range.min.z + range.max.z) / 2
 
     FOR i% = 0 TO n%
         k% = i% + offset%
@@ -511,7 +540,36 @@ SUB DrawPolyAlt (i%, polyIndex%)
 
 END SUB
 
-SUB InitObject3D (params AS ObjGenParams, obj AS Object3D)
+SUB FindObjectScaleToFit (obj AS Object3D, desiredRange!, scale!)
+
+    DIM range AS Range3D
+    CalcObjectVerticesRange obj, range
+
+    dx! = range.max.x - range.min.x
+    dy! = range.max.y - range.min.y
+    dz! = range.max.z - range.min.z
+
+    rangeLengthDiag! = SQR(dx! * dx! + dy! * dy! + dz! * dz!)
+
+    scale! = desiredRange! / rangeLengthDiag!
+
+END SUB
+
+SUB FlipPolygonOrientation (obj AS Object3D)
+
+    offset% = obj.polyIndicesOffset
+    n% = offset% + obj.numPolyIndices - 1
+
+    FOR i% = offset% TO n% STEP 3
+        FOR j% = 0 TO 2 STEP 2
+            k% = objectPolyIndices%(i% + j%)
+            objectPolyIndices%(i% + 2 - j%) = k%
+        NEXT j%
+    NEXT i%
+
+END SUB
+
+SUB GenObject3D (params AS ObjGenParams, obj AS Object3D)
 
     obj.verticesOffset = currentVertexAdd%
     obj.polyIndicesOffset = currentPolyIndexAdd%
@@ -521,16 +579,16 @@ SUB InitObject3D (params AS ObjGenParams, obj AS Object3D)
     SELECT CASE params.index
        
         CASE objGenCube%
-            InitObject3Dcube params, obj
+            GenObject3Dcube params, obj
 
         CASE objGenDotCube%
-            InitObject3DdotCube params, obj
+            GenObject3DdotCube params, obj
 
         CASE objGenSphere%
-            InitObject3Dsphere params, obj
+            GenObject3Dsphere params, obj
 
         CASE objGenTorus%
-            InitObject3Dtorus params, obj
+            GenObject3Dtorus params, obj
 
         CASE ELSE
             PRINT "Object Index doesn't exist.."
@@ -538,7 +596,7 @@ SUB InitObject3D (params AS ObjGenParams, obj AS Object3D)
 
 END SUB
 
-SUB InitObject3Dcube (params AS ObjGenParams, obj AS Object3D)
+SUB GenObject3Dcube (params AS ObjGenParams, obj AS Object3D)
 
     obj.numVertices = 8
     obj.numPolys = 12
@@ -587,7 +645,7 @@ SUB InitObject3Dcube (params AS ObjGenParams, obj AS Object3D)
 
 END SUB
 
-SUB InitObject3DdotCube (params AS ObjGenParams, object AS Object3D)
+SUB GenObject3DdotCube (params AS ObjGenParams, object AS Object3D)
 
     object.numVertices = 512
     object.numPolys = 0
@@ -606,11 +664,11 @@ SUB InitObject3DdotCube (params AS ObjGenParams, object AS Object3D)
 
 END SUB
 
-SUB InitObject3Dsphere (params AS ObjGenParams, obj AS Object3D)
+SUB GenObject3Dsphere (params AS ObjGenParams, obj AS Object3D)
 
 END SUB
 
-SUB InitObject3Dtorus (params AS ObjGenParams, obj AS Object3D)
+SUB GenObject3Dtorus (params AS ObjGenParams, obj AS Object3D)
 
 END SUB
 
@@ -635,9 +693,10 @@ SUB InitScene3D
 
     DIM genParams AS ObjGenParams
 
-    object(currentObject%).renderType = renderTypePoly%
+    CONST defaultScaleRange! = 1024 - 128
 
-    scaleValue! = 1!
+    object(currentObject%).renderType = renderTypePoly%
+    mustFlipPolygonOrientation% = FALSE%
 
     SELECT CASE currentObject%
 
@@ -653,8 +712,8 @@ SUB InitScene3D
         CASE objGenTorus%
 
         CASE objLoadTest%
-            objFile$ = "chopper.plg"
-            scaleValue! = .2
+            objFile$ = "teapot.plg"
+            'mustFlipPolygonOrientation% = TRUE%
             'object(currentObject%).renderType = renderTypeDots%
 
         CASE objLoadTeapot%
@@ -670,19 +729,23 @@ SUB InitScene3D
 
     IF objectMustGen% = TRUE% THEN
         genParams.index = currentObject%
-        InitObject3D genParams, object(currentObject%)
+        GenObject3D genParams, object(currentObject%)
     END IF
 
     IF objectMustLoad% = TRUE% THEN
         IF objFile$ <> "" THEN LoadObject3D objFile$, object(currentObject%)
+
+        FindObjectScaleToFit object(currentObject%), defaultScaleRange!, scaleValue!
         ScaleObjectVertices object(currentObject%), scaleValue!
+
+        IF mustFlipPolygonOrientation% THEN FlipPolygonOrientation object(currentObject%)
     END IF
 
 END SUB
 
 SUB LoadObject3D (objFile$, obj AS Object3D)
 
-    CONST maxPolyPoints% = 12
+    CONST maxPolyPoints% = 32
     CONST maxIndexDataNum% = 2 + maxPolyPoints%
 
     DIM values(0 TO maxIndexDataNum% - 1) AS STRING
@@ -694,7 +757,7 @@ SUB LoadObject3D (objFile$, obj AS Object3D)
 
     OPEN objFile$ FOR INPUT AS #1
 
-    LINE INPUT #1, lbuf$
+    ReadLineStringFromPlg 1, lbuf$
     ReadLineValues lbuf$, values(), 3
 
     obj.numVertices = VAL(values(1))
@@ -703,13 +766,13 @@ SUB LoadObject3D (objFile$, obj AS Object3D)
     obj.numLineIndices = 0
 
     FOR i% = 1 TO obj.numVertices
-        LINE INPUT #1, lbuf$
+        ReadLineStringFromPlg 1, lbuf$
         ReadLineValues lbuf$, values(), 3
         AddVertex VAL(values(0)), VAL(values(1)), VAL(values(2))
     NEXT i%
 
     FOR i% = 1 TO obj.numPolys
-        LINE INPUT #1, lbuf$
+        ReadLineStringFromPlg 1, lbuf$
         ReadLineValues lbuf$, values(), maxIndexDataNum%    ' later I will deduce by reading second value the size, now I just read max
         numPoints% = VAL(values(1))
         obj.numPolyIndices = obj.numPolyIndices + 3 * (numPoints% - 2)
@@ -765,6 +828,17 @@ SUB PrepareEdgeList (x0%, y0%, x1%, y1%)
         NEXT y%
 
     END IF
+
+END SUB
+
+SUB ReadLineStringFromPlg (fileHandle%, bufDst$)
+
+    DO
+        LINE INPUT #fileHandle%, lbuf$
+        IF LEFT$(lbuf$, 1) = "#" THEN lbuf$ = ""
+    LOOP WHILE lbuf$ = ""
+
+    bufDst$ = lbuf$
 
 END SUB
 
