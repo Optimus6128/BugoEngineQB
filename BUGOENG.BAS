@@ -1,9 +1,14 @@
+DECLARE SUB MulMatWithVector3D (srcVec AS ANY, dstVec AS ANY, mat!())
+DECLARE SUB InvertMatrix (srcMat!(), dstMat!())
+DECLARE SUB CalcRotMatrix (rot AS ANY)
+DECLARE SUB DotIVec (vSrc1 AS ANY, vSrc2 AS ANY, iDst%)
 DECLARE SUB NormIVec (v AS ANY)
 DECLARE SUB CrossIVec (vSrc1 AS ANY, vSrc2 AS ANY, vDst AS ANY)
 DECLARE SUB SubIVec (vSrc1 AS ANY, vSrc2 AS ANY, vDst AS ANY)
 DECLARE SUB AddVertexNormal (x%, y%, z%)
 DECLARE SUB AddPolyNormal (x%, y%, z%)
 DECLARE SUB CalcObjectPolyNormals (obj AS ANY)
+DECLARE SUB CalcObjectPolyLighting (obj AS ANY, light AS ANY)
 DECLARE SUB DisplayPalette ()
 DECLARE SUB GenObject3Dcube (params AS ANY, obj AS ANY)
 DECLARE SUB GenObject3DdotCube (params AS ANY, object AS ANY)
@@ -18,7 +23,6 @@ DECLARE SUB ScaleObjectVertices (obj AS ANY, scale!)
 DECLARE SUB DrawPoly (i%, polyIndex%)
 DECLARE SUB SetCurrentObject (objNum%, objFile$)
 DECLARE SUB ReadLineValues (inp$, out$(), numVals%)
-DECLARE SUB DrawEdgesArr (col%)
 DECLARE SUB WriteVram ()
 DECLARE SUB PrepareEdgeList (x0%, y0%, x1%, y1%)
 DECLARE SUB DrawEdges (col%)
@@ -74,7 +78,7 @@ CONST PI! = 3.14159265359#
 CONST BLURSWITCH% = 0   ' blur will overflow in interpreter only compiled exe
 
 CONST FPRAST% = 64
-CONST FPNORM% = 256
+CONST FPNORM% = 64
 
 CONST ZBUCKETSIZE% = 16
 CONST ZBUCKETMAX% = 2048
@@ -152,9 +156,7 @@ END TYPE
 
 TYPE PolyData
     col AS INTEGER
-    texOffset AS INTEGER
-    texWidth AS INTEGER
-    texHeight AS INTEGER
+    shade AS INTEGER
 END TYPE
 
 TYPE ObjGenParams
@@ -222,6 +224,10 @@ DIM SHARED currentVertexNormalAdd%
 
 DIM SHARED edgeYmin%, edgeYmax%
 DIM SHARED polyEdge(0 TO 1, 0 TO SCRHEIGHT% - 1) AS Edge
+
+DIM SHARED rotMat(0 TO 8) AS SINGLE
+
+DIM SHARED light1 AS Vector3D
 
 
 ' ---- Init ----
@@ -355,6 +361,34 @@ SUB BlurVramY
 
 END SUB
 
+SUB CalcObjectPolyLighting (obj AS Object3D, light AS Vector3D)
+
+    DIM rotLight AS Vector3D
+    DIM iLight AS IVector3D
+    DIM invRotMat!(8)
+
+    InvertMatrix rotMat!(), invRotMat!()
+
+    MulMatWithVector3D light, rotLight, invRotMat!()
+
+    iLight.x = INT(rotLight.x * FPNORM%)
+    iLight.y = INT(rotLight.y * FPNORM%)
+    iLight.z = INT(rotLight.z * FPNORM%)
+
+    offset% = obj.polyNormalsOffset
+    n% = offset% + obj.numPolys - 1
+
+    FOR i% = offset% TO n%
+        DotIVec objectPolyNormals(i%), iLight, d%
+
+        IF d% < 0 THEN d% = 0
+        IF d% > FPNORM% THEN d% = FPNORM%
+
+        objectPolygons(i%).shade = (63 * d%) \ FPNORM%
+    NEXT i%
+
+END SUB
+
 SUB CalcObjectPolyNormals (obj AS Object3D)
 
     DIM norm AS IVector3D
@@ -426,6 +460,28 @@ SUB CalcObjectVerticesRange (obj AS Object3D, range AS Range3D)
     range.max.y = INT(maxY!)
     range.min.z = INT(minZ!)
     range.max.z = INT(maxZ!)
+
+END SUB
+
+SUB CalcRotMatrix (rot AS Vector3D)
+
+    cosxr! = COS(rot.x)
+    cosyr! = COS(rot.y)
+    coszr! = COS(rot.z)
+    sinxr! = SIN(rot.x)
+    sinyr! = SIN(rot.y)
+    sinzr! = SIN(rot.z)
+
+    ' Matrix values
+    rotMat(0) = cosyr! * coszr!
+    rotMat(1) = sinxr! * sinyr! * coszr! - cosxr! * sinzr!
+    rotMat(2) = cosxr! * sinyr! * coszr! + sinxr! * sinzr!
+    rotMat(3) = cosyr! * sinzr!
+    rotMat(4) = cosxr! * coszr! + sinxr! * sinyr! * sinzr!
+    rotMat(5) = -sinxr! * coszr! + cosxr! * sinyr! * sinzr!
+    rotMat(6) = -sinyr!
+    rotMat(7) = sinxr! * cosyr!
+    rotMat(8) = cosxr! * cosyr!
 
 END SUB
 
@@ -504,6 +560,15 @@ SUB DisplayPalette
 
 END SUB
 
+SUB DotIVec (vSrc1 AS IVector3D, vSrc2 AS IVector3D, iDst%)
+   
+    v1x& = vSrc1.x: v1y& = vSrc1.y: v1z& = vSrc1.z
+    v2x& = vSrc2.x: v2y& = vSrc2.y: v2z& = vSrc2.z
+
+    iDst% = (v1x& * v2x&) \ FPNORM% + (v1y& * v2y&) \ FPNORM% + (v1z& * v2z&) \ FPNORM%
+
+END SUB
+
 SUB DrawEdges (col%)
 
     screenSeg& = VARSEG(vram%(0))
@@ -524,6 +589,7 @@ SUB DrawEdges (col%)
                 POKE 4 + xs0%, col%
                 xs0% = xs0% + 1
             END IF
+
             IF NOT xs1% AND 1 THEN
                 POKE 4 + xs1%, col%
                 xs1% = xs1% - 1
@@ -533,49 +599,10 @@ SUB DrawEdges (col%)
                 POKE 4 + x%, col%
                 POKE 5 + x%, col%
             NEXT x%
+
         END IF
 
         ys% = ys% + (SCRWIDTH% \ 16)
-    NEXT y%
-
-END SUB
-
-SUB DrawEdgesArr (col%)
-
-    colH% = col% * 256
-    col16% = colH% OR col%
-
-    yEnd% = edgeYmax% - 1 ' one less edge bottom to avoid overdraw
-    ofs% = 2 + edgeYmin% * (SCRWIDTH% \ 2)
-    FOR y% = edgeYmin% TO yEnd%
-        xs0% = polyEdge(0, y%).x
-        xs1% = polyEdge(1, y%).x - 1 ' one less pixel right to avoid overdraw
-
-        IF xs1% >= xs0% THEN
-
-            xi% = ofs% + xs0% \ 2
-
-            IF xs0% AND 1 THEN
-                c% = vram%(xi%)
-                vram%(xi%) = (c% AND &HFF00) OR colH%
-                xs0% = xs0% + 1
-                xi% = xi% + 1
-            END IF
-            IF NOT xs1% AND 1 THEN
-                xr% = ofs% + xs1% \ 2
-                c% = vram%(xr%)
-                vram%(xr%) = (c% AND &HFF) OR col%
-                xs1% = xs1% - 1
-            END IF
-
-            FOR x% = xs0% TO xs1% STEP 2
-                vram%(xi%) = col16%
-                xi% = xi% + 1
-            NEXT x%
-
-        END IF
-
-    ofs% = ofs% + (SCRWIDTH% \ 2)
     NEXT y%
 
 END SUB
@@ -608,9 +635,9 @@ SUB DrawPoly (i%, polyIndex%)
         PrepareEdgeList x1%, y1%, x2%, y2%
         PrepareEdgeList x2%, y2%, x0%, y0%
 
-        col% = objectPolygons(polyIndex%).col
+        col% = objectPolygons(polyIndex%).col + objectPolygons(polyIndex%).shade
+
         DrawEdges col%
-        'DrawEdgesArr col%
     END IF
 
 END SUB
@@ -670,6 +697,8 @@ SUB GenObject3D (params AS ObjGenParams, obj AS Object3D)
         CASE ELSE
             PRINT "Object Index doesn't exist.."
     END SELECT
+
+    CalcObjectPolyNormals obj
 
 END SUB
 
@@ -754,8 +783,10 @@ SUB InitPrecalcs
 ' Just randomize polygon colors for now
 
     FOR i& = 0 TO maxPolys% - 1
-        c% = (32 + ((16 * i&) AND 63)) AND 255
-        'c% = (8 * i&) AND 255
+        'c% = (32 + ((16 * i&) AND 63)) AND 255
+
+        'c% = (i& AND 1) * 64
+        c% = 0
 
         IF BLURSWITCH% = 1 THEN c% = c% AND 63
 
@@ -813,6 +844,18 @@ SUB InitScene3D
 
 END SUB
 
+SUB InvertMatrix (srcMat!(), dstMat!())
+
+    k% = 0
+    FOR j% = 0 TO 2
+        FOR i% = 0 TO 2
+            dstMat!(k%) = srcMat!(3 * i% + j%)
+            k% = k% + 1
+        NEXT i%
+    NEXT j%
+
+END SUB
+
 SUB LoadObject3D (objFile$, obj AS Object3D)
 
     CONST maxPolyPoints% = 32
@@ -833,7 +876,9 @@ SUB LoadObject3D (objFile$, obj AS Object3D)
     ReadLineValues lbuf$, values(), 3
 
     obj.numVertices = VAL(values(1))
-    obj.numPolys = VAL(values(2))
+    numPolys% = VAL(values(2))  ' PLG polys that can have more edges than triangles
+    obj.numPolys = 0            ' as we subdivide to only triangles below we will be increasing this
+
     obj.numPolyIndices = 0
     obj.numLineIndices = 0
 
@@ -843,11 +888,13 @@ SUB LoadObject3D (objFile$, obj AS Object3D)
         AddVertex VAL(values(0)), VAL(values(1)), VAL(values(2))
     NEXT i%
 
-    FOR i% = 1 TO obj.numPolys
+    FOR i% = 1 TO numPolys%
         ReadLineStringFromPlg 1, lbuf$
         ReadLineValues lbuf$, values(), maxIndexDataNum%    ' later I will deduce by reading second value the size, now I just read max
         numPoints% = VAL(values(1))
-        obj.numPolyIndices = obj.numPolyIndices + 3 * (numPoints% - 2)
+        numTriangles% = numPoints% - 2
+        obj.numPolys = obj.numPolys + numTriangles%
+        obj.numPolyIndices = obj.numPolyIndices + 3 * numTriangles%
 
         IF numPoints% = 3 THEN
             AddTriangleIndices VAL(values(2)), VAL(values(3)), VAL(values(4))
@@ -861,6 +908,18 @@ SUB LoadObject3D (objFile$, obj AS Object3D)
     CLOSE #1
 
     CenterObjectVertices obj
+
+END SUB
+
+SUB MulMatWithVector3D (srcVec AS Vector3D, dstVec AS Vector3D, mat!())
+
+        x! = srcVec.x
+        y! = srcVec.y
+        z! = srcVec.z
+
+        dstVec.x = x! * mat(0) + y! * mat(3) + z! * mat(6)
+        dstVec.y = x! * mat(1) + y! * mat(4) + z! * mat(7)
+        dstVec.z = x! * mat(2) + y! * mat(5) + z! * mat(8)
 
 END SUB
 
@@ -958,6 +1017,7 @@ SUB RenderObject3D (obj AS Object3D)
 
         CASE renderTypePoly%
             SortObject3Dpoly obj
+            CalcObjectPolyLighting obj, light1
             RenderObject3Dpoly obj
 
         CASE ELSE
@@ -1069,12 +1129,16 @@ SUB RunScene3D (t!)
     ry! = t!
     rz! = 1.25 * t!
 
+    light1.x = 0
+    light1.y = 0
+    light1.z = 1
+
     SELECT CASE currentObject%
 
         CASE objGenCube%
-            zt! = 160
-            xt! = SIN(.5 * t!) * 64
-            yt! = SIN(.75 * t!) * 64
+            zt! = 128
+            'xt! = SIN(.5 * t!) * 64
+            'yt! = SIN(.75 * t!) * 64
 
         CASE objGenDotCube%
             zt! = 256
@@ -1138,17 +1202,56 @@ OUT &H3C8, 0
 OUT &H3C9, 0
 OUT &H3C9, 0
 OUT &H3C9, 0
-FOR i% = 1 TO 127
-    OUT &H3C9, (1 * i% \ 2) AND 63
-    OUT &H3C9, (.75 * i% \ 2) AND 63
-    OUT &H3C9, (2 * i% \ 2) AND 63
-NEXT i%
-FOR i% = 128 TO 255
-    OUT &H3C9, (2 * (i% - 128) \ 2) AND 63
-    OUT &H3C9, (1 * (i% - 128) \ 2) AND 63
-    OUT &H3C9, (.75 * (i% - 128) \ 2) AND 63
-NEXT i%
 
+CONST palTest% = 0
+
+    SELECT CASE palTest%
+
+        CASE 0
+
+            FOR i% = 1 TO 127
+                OUT &H3C9, (1 * i% \ 2) AND 63
+                OUT &H3C9, (.75 * i% \ 2) AND 63
+                OUT &H3C9, (2 * i% \ 2) AND 63
+            NEXT i%
+            FOR i% = 128 TO 255
+                OUT &H3C9, (2 * (i% - 128) \ 2) AND 63
+                OUT &H3C9, (1 * (i% - 128) \ 2) AND 63
+                OUT &H3C9, (.75 * (i% - 128) \ 2) AND 63
+            NEXT i%
+
+        CASE 1
+
+            FOR i% = 1 TO 63
+                OUT &H3C9, i% \ 1
+                OUT &H3C9, i% \ 3
+                OUT &H3C9, i% \ 4
+            NEXT i%
+
+            FOR i% = 64 TO 127
+                ii% = i% - 64
+                OUT &H3C9, ii% \ 3
+                OUT &H3C9, ii% \ 1
+                OUT &H3C9, ii% \ 4
+            NEXT i%
+
+            FOR i% = 128 TO 191
+                ii% = i% - 128
+                OUT &H3C9, ii% \ 3
+                OUT &H3C9, ii% \ 4
+                OUT &H3C9, ii% \ 1
+            NEXT i%
+
+            FOR i% = 192 TO 255
+                ii% = i% - 192
+                OUT &H3C9, ii% \ 1
+                OUT &H3C9, ii% \ 3
+                OUT &H3C9, ii% \ 1
+            NEXT i%
+
+        CASE ELSE
+
+    END SELECT
 
 END SUB
 
@@ -1246,28 +1349,7 @@ SUB TransformObject3D (obj AS Object3D)
     posY! = obj.position.y
     posZ! = obj.position.z
 
-    rotX! = obj.rotation.x
-    rotY! = obj.rotation.y
-    rotZ! = obj.rotation.z
-
-    cosxr! = COS(rotX!)
-    cosyr! = COS(rotY!)
-    coszr! = COS(rotZ!)
-    sinxr! = SIN(rotX!)
-    sinyr! = SIN(rotY!)
-    sinzr! = SIN(rotZ!)
-
-    ' Matrix values
-    m0! = cosyr! * coszr!
-    m1! = sinxr! * sinyr! * coszr! - cosxr! * sinzr!
-    m2! = cosxr! * sinyr! * coszr! + sinxr! * sinzr!
-    m3! = cosyr! * sinzr!
-    m4! = cosxr! * coszr! + sinxr! * sinyr! * sinzr!
-    m5! = -sinxr! * coszr! + cosxr! * sinyr! * sinzr!
-    m6! = -sinyr!
-    m7! = sinxr! * cosyr!
-    m8! = cosxr! * cosyr!
-
+    CalcRotMatrix obj.rotation
 
     offset% = obj.verticesOffset
     n% = obj.numVertices - 1
@@ -1278,15 +1360,16 @@ SUB TransformObject3D (obj AS Object3D)
         yo! = objectVertices(k%).y
         zo! = objectVertices(k%).z
 
-        x! = xo! * m0! + yo! * m3! + zo! * m6!
-        y! = xo! * m1! + yo! * m4! + zo! * m7!
-        z! = xo! * m2! + yo! * m5! + zo! * m8!
+        z! = xo! * rotMat(2) + yo! * rotMat(5) + zo! * rotMat(8)
 
-        z! = z! + posZ!
-        screenVertices(i%).z = INT(z!)
-        IF z! > 0 THEN
-            screenVertices(i%).x = SCRWIDTH2% + INT(((x! + posX!) * proj!) \ z!)
-            screenVertices(i%).y = SCRHEIGHT2% - INT(((y! + posY!) * proj!) \ z!)
+        zi% = INT(z! + posZ!)
+        screenVertices(i%).z = zi%
+        IF zi% > 0 THEN
+            x! = xo! * rotMat(0) + yo! * rotMat(3) + zo! * rotMat(6)
+            y! = xo! * rotMat(1) + yo! * rotMat(4) + zo! * rotMat(7)
+
+            screenVertices(i%).x = SCRWIDTH2% + INT((x! + posX!) * proj!) \ zi%
+            screenVertices(i%).y = SCRHEIGHT2% - INT((y! + posY!) * proj!) \ zi%
         END IF
 
     NEXT i%
