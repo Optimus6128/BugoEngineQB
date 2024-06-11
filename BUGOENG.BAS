@@ -1,5 +1,8 @@
-DECLARE SUB AddVertexNormal (x!, y!, z!)
-DECLARE SUB AddPolyNormal (x!, y!, z!)
+DECLARE SUB NormIVec (v AS ANY)
+DECLARE SUB CrossIVec (vSrc1 AS ANY, vSrc2 AS ANY, vDst AS ANY)
+DECLARE SUB SubIVec (vSrc1 AS ANY, vSrc2 AS ANY, vDst AS ANY)
+DECLARE SUB AddVertexNormal (x%, y%, z%)
+DECLARE SUB AddPolyNormal (x%, y%, z%)
 DECLARE SUB CalcObjectPolyNormals (obj AS ANY)
 DECLARE SUB DisplayPalette ()
 DECLARE SUB GenObject3Dcube (params AS ANY, obj AS ANY)
@@ -71,6 +74,7 @@ CONST PI! = 3.14159265359#
 CONST BLURSWITCH% = 0   ' blur will overflow in interpreter only compiled exe
 
 CONST FPRAST% = 64
+CONST FPNORM% = 256
 
 CONST ZBUCKETSIZE% = 16
 CONST ZBUCKETMAX% = 2048
@@ -87,8 +91,10 @@ DIM SHARED zBucketLeftovers%(0 TO LEFTOVERSSIZE%)
 DIM SHARED minZbucket%
 DIM SHARED maxZbucket%
 
-CONST maxTempVertices% = 768
-CONST maxVertices% = 1 * maxTempVertices%
+CONST maxTempVertices% = 1024
+CONST avgObjVertexNum% = 256
+CONST maxObjectsOnScreen% = 4
+CONST maxVertices% = maxObjectsOnScreen% * avgObjVertexNum%
 CONST maxPolys% = 2 * maxVertices%
 
 
@@ -136,6 +142,13 @@ TYPE Vector3D
     y AS SINGLE
     z AS SINGLE
 END TYPE
+
+TYPE IVector3D
+    x AS INTEGER
+    y AS INTEGER
+    z AS INTEGER
+END TYPE
+
 
 TYPE PolyData
     col AS INTEGER
@@ -189,16 +202,16 @@ vram%(1) = 200
 
 DIM SHARED object(0 TO numObjects% - 1) AS Object3D
 
-DIM SHARED screenVertices(0 TO maxTempVertices%) AS Vertex3D
-DIM SHARED transformedVertexNormals(0 TO maxTempVertices%) AS Vector3D
+DIM SHARED screenVertices(0 TO maxTempVertices% - 1) AS Vertex3D
+DIM SHARED transformedVertexNormals(0 TO maxTempVertices% - 1) AS IVector3D
 
-DIM SHARED objectVertices(0 TO maxVertices%) AS Vertex3D
-DIM SHARED objectPolyIndices%(0 TO 3 * maxPolys%)
-DIM SHARED objectLineIndices%(0 TO 6 * maxPolys%)
-DIM SHARED objectPolygons(0 TO maxPolys%) AS PolyData
+DIM SHARED objectVertices(0 TO maxVertices% - 1) AS Vertex3D
+DIM SHARED objectPolyIndices%(0 TO 3 * maxPolys% - 1)
+DIM SHARED objectLineIndices%(0 TO 6 * maxPolys% - 1)
+DIM SHARED objectPolygons(0 TO maxPolys% - 1) AS PolyData
 
-DIM SHARED objectPolyNormals(0 TO maxPolys%) AS Vector3D
-DIM SHARED objectVertexNormals(0 TO maxVertices%) AS Vector3D
+DIM SHARED objectPolyNormals(0 TO maxPolys% - 1) AS IVector3D
+DIM SHARED objectVertexNormals(0 TO maxVertices% - 1) AS IVector3D
 
 DIM SHARED currentVertexAdd%
 DIM SHARED currentPolyIndexAdd%
@@ -260,8 +273,6 @@ timeEnd! = TIMER
 PRINT nframe& / (timeEnd! - timeStart!)
 SLEEP
 
-
-
 SUB AddLineIndices (i0%, i1%)
 
     objectLineIndices%(currentLineIndexAdd%) = i0%
@@ -271,11 +282,11 @@ SUB AddLineIndices (i0%, i1%)
 
 END SUB
 
-SUB AddPolyNormal (x!, y!, z!)
+SUB AddPolyNormal (x%, y%, z%)
 
-    objectPolyNormals(currentPolyNormalAdd%).x = x!
-    objectPolyNormals(currentPolyNormalAdd%).y = y!
-    objectPolyNormals(currentPolyNormalAdd%).z = z!
+    objectPolyNormals(currentPolyNormalAdd%).x = x%
+    objectPolyNormals(currentPolyNormalAdd%).y = y%
+    objectPolyNormals(currentPolyNormalAdd%).z = z%
 
     currentPolyNormalAdd% = currentPolyNormalAdd% + 1
 
@@ -301,11 +312,11 @@ SUB AddVertex (x%, y%, z%)
 
 END SUB
 
-SUB AddVertexNormal (x!, y!, z!)
+SUB AddVertexNormal (x%, y%, z%)
 
-    objectVertexNormals(currentVertexNormalAdd%).x = x!
-    objectVertexNormals(currentVertexNormalAdd%).y = y!
-    objectVertexNormals(currentVertexNormalAdd%).z = z!
+    objectVertexNormals(currentVertexNormalAdd%).x = x%
+    objectVertexNormals(currentVertexNormalAdd%).y = y%
+    objectVertexNormals(currentVertexNormalAdd%).z = z%
 
     currentVertexNormalAdd% = currentVertexNormalAdd% + 1
 
@@ -346,6 +357,15 @@ END SUB
 
 SUB CalcObjectPolyNormals (obj AS Object3D)
 
+    DIM norm AS IVector3D
+
+    DIM a0 AS IVector3D
+    DIM a1 AS IVector3D
+
+    DIM v0 AS IVector3D
+    DIM v1 AS IVector3D
+    DIM v2 AS IVector3D
+
     offset% = obj.polyIndicesOffset
     n% = offset% + obj.numPolyIndices - 1
 
@@ -355,19 +375,25 @@ SUB CalcObjectPolyNormals (obj AS Object3D)
         i1% = objectPolyIndices%(i% + 1)
         i2% = objectPolyIndices%(i% + 2)
 
-        x0! = screenVertices(i0%).x
-        x1! = screenVertices(i1%).x
-        x2! = screenVertices(i2%).x
+        v0.x = objectVertices(i0%).x
+        v0.y = objectVertices(i0%).y
+        v0.z = objectVertices(i0%).z
 
-        y0! = screenVertices(i0%).y
-        y1! = screenVertices(i1%).y
-        y2! = screenVertices(i2%).y
+        v1.x = objectVertices(i1%).x
+        v1.y = objectVertices(i1%).y
+        v1.z = objectVertices(i1%).z
 
-        z0! = screenVertices(i0%).z
-        z1! = screenVertices(i1%).z
-        z2! = screenVertices(i2%).z
+        v2.x = objectVertices(i2%).x
+        v2.y = objectVertices(i2%).y
+        v2.z = objectVertices(i2%).z
 
-        ' CROSS then NORMALIZE
+        SubIVec v1, v0, a0
+        SubIVec v2, v1, a1
+
+        CrossIVec a0, a1, norm
+        NormIVec norm
+
+        AddPolyNormal norm.x, norm.y, norm.z
 
     NEXT i%
 
@@ -394,12 +420,12 @@ SUB CalcObjectVerticesRange (obj AS Object3D, range AS Range3D)
         IF z! < minZ! THEN minZ! = z! ELSE IF z! > maxZ! THEN maxZ! = z!
     NEXT i%
 
-    range.min.x = minX!
-    range.max.x = maxX!
-    range.min.y = minY!
-    range.max.y = maxY!
-    range.min.z = minZ!
-    range.max.z = maxZ!
+    range.min.x = INT(minX!)
+    range.max.x = INT(maxX!)
+    range.min.y = INT(minY!)
+    range.max.y = INT(maxY!)
+    range.min.z = INT(minZ!)
+    range.max.z = INT(maxZ!)
 
 END SUB
 
@@ -445,6 +471,21 @@ SUB ClearVram
 
     vram%(0) = 320 * 8
     vram%(1) = 200
+
+END SUB
+
+SUB CrossIVec (vSrc1 AS IVector3D, vSrc2 AS IVector3D, vDst AS IVector3D)
+
+    v1x& = vSrc1.x: v1y& = vSrc1.y: v1z& = vSrc1.z
+    v2x& = vSrc2.x: v2y& = vSrc2.y: v2z& = vSrc2.z
+
+    vx% = (v1y& * v2z&) \ FPNORM% - (v1z& * v2y&) \ FPNORM%
+    vy% = (v1z& * v2x&) \ FPNORM% - (v1x& * v2z&) \ FPNORM%
+    vz% = (v1x& * v2y&) \ FPNORM% - (v1y& * v2x&) \ FPNORM%
+
+    vDst.x = vx%
+    vDst.y = vy%
+    vDst.z = vz%
 
 END SUB
 
@@ -712,7 +753,7 @@ SUB InitPrecalcs
 
 ' Just randomize polygon colors for now
 
-    FOR i& = 0 TO maxPolys%
+    FOR i& = 0 TO maxPolys% - 1
         c% = (32 + ((16 * i&) AND 63)) AND 255
         'c% = (8 * i&) AND 255
 
@@ -766,6 +807,8 @@ SUB InitScene3D
         ScaleObjectVertices object(currentObject%), scaleValue!
 
         IF mustFlipPolygonOrientation% THEN FlipPolygonOrientation object(currentObject%)
+   
+        CalcObjectPolyNormals object(currentObject%)
     END IF
 
 END SUB
@@ -818,6 +861,23 @@ SUB LoadObject3D (objFile$, obj AS Object3D)
     CLOSE #1
 
     CenterObjectVertices obj
+
+END SUB
+
+SUB NormIVec (v AS IVector3D)
+
+    x& = v.x: y& = v.y: z& = v.z
+    d& = SQR(x& * x& + y& * y& + z& * z&) ' need to figure fixed point sqrt, it's sometimes outside +/- FPNORM% in length I think
+
+    IF d& > 0 THEN
+        v.x = (x& * FPNORM%) \ d&
+        v.y = (y& * FPNORM%) \ d&
+        v.z = (z& * FPNORM%) \ d&
+    ELSE
+        v.x = 0
+        v.y = 0
+        v.z = 0
+    END IF
 
 END SUB
 
@@ -1167,6 +1227,14 @@ SUB SortObject3Dpoly (obj AS Object3D)
         END IF
 
     NEXT i%
+
+END SUB
+
+SUB SubIVec (vSrc1 AS IVector3D, vSrc2 AS IVector3D, vDst AS IVector3D)
+
+    vDst.x = vSrc1.x - vSrc2.x
+    vDst.y = vSrc1.y - vSrc2.y
+    vDst.z = vSrc1.z - vSrc2.z
 
 END SUB
 

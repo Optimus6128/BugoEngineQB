@@ -1,0 +1,26 @@
+-Z issues
+    b11a.plg
+    angel1.plg
+    frntgate.plg
+    fish4.plg
+    fish6.plg
+    fish10.plg
+    teacup.plg
+    b12a.plg
+
+- Nice
+
+    octo1.plg (lowres torus)
+    springy1.plg (nicely sorted detailed, seen in demos)
+    glass1.plg (nice glass, must have seen in a demo)
+    sledge.plg (sfyraki)
+    tree1/2.plg (ena anapodo trigono)
+
+- Fail
+    tesserac.plg (probably something in the plg I have to skip)
+
+- Lost central axis
+
+    hole.plg
+    chair/s.plg
+
