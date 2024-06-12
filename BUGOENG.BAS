@@ -1,144 +1,25 @@
-DECLARE SUB MulMatWithVector3D (srcVec AS ANY, dstVec AS ANY, mat!())
-DECLARE SUB InvertMatrix (srcMat!(), dstMat!())
-DECLARE SUB CalcRotMatrix (rot AS ANY)
-DECLARE SUB DotIVec (vSrc1 AS ANY, vSrc2 AS ANY, iDst%)
-DECLARE SUB NormIVec (v AS ANY)
-DECLARE SUB CrossIVec (vSrc1 AS ANY, vSrc2 AS ANY, vDst AS ANY)
-DECLARE SUB SubIVec (vSrc1 AS ANY, vSrc2 AS ANY, vDst AS ANY)
-DECLARE SUB AddVertexNormal (x%, y%, z%)
-DECLARE SUB AddPolyNormal (x%, y%, z%)
-DECLARE SUB CalcObjectPolyNormals (obj AS ANY)
-DECLARE SUB CalcObjectPolyLighting (obj AS ANY, light AS ANY)
-DECLARE SUB DisplayPalette ()
-DECLARE SUB GenObject3Dcube (params AS ANY, obj AS ANY)
-DECLARE SUB GenObject3DdotCube (params AS ANY, object AS ANY)
-DECLARE SUB GenObject3Dsphere (params AS ANY, obj AS ANY)
-DECLARE SUB GenObject3Dtorus (params AS ANY, obj AS ANY)
-DECLARE SUB GenObject3D (params AS ANY, obj AS ANY)
-DECLARE SUB ReadLineStringFromPlg (fileHandle%, bufDst$)
-DECLARE SUB FlipPolygonOrientation (obj AS ANY)
-DECLARE SUB FindObjectScaleToFit (obj AS ANY, desiredRange!, scale!)
-DECLARE SUB CalcObjectVerticesRange (obj AS ANY, range AS ANY)
-DECLARE SUB ScaleObjectVertices (obj AS ANY, scale!)
-DECLARE SUB DrawPoly (i%, polyIndex%)
-DECLARE SUB SetCurrentObject (objNum%, objFile$)
-DECLARE SUB ReadLineValues (inp$, out$(), numVals%)
-DECLARE SUB WriteVram ()
-DECLARE SUB PrepareEdgeList (x0%, y0%, x1%, y1%)
-DECLARE SUB DrawEdges (col%)
-DECLARE SUB RenderObject3Ddots (obj AS ANY)
-DECLARE SUB RenderObject3Dwire (obj AS ANY)
-DECLARE SUB RenderObject3Dpoly (obj AS ANY)
-DECLARE SUB SortObject3Dpoly (obj AS ANY)
-DECLARE SUB CenterObjectVertices (obj AS ANY)
-DECLARE SUB AddLineIndices (i0%, i1%)
-DECLARE SUB ClearBlurJunk ()
-DECLARE SUB BlurVram ()
-DECLARE SUB BlurVramX ()
-DECLARE SUB BlurVramY ()
-DECLARE SUB RunScene3D (t!)
-DECLARE SUB InitScene3D ()
-DECLARE SUB SetDefaultPalette ()
-DECLARE SUB InitPrecalcs ()
-DECLARE SUB ClearBuffer (bufferNum%)
-DECLARE SUB WriteScreen (screenNum%)
-DECLARE SUB ClearVram ()
-DECLARE SUB WaitForVsync ()
-
-DECLARE SUB PlotPixel (x%, y%, col%)
-DECLARE SUB SetObjectPosition (obj AS ANY, px!, py!, pz!)
-DECLARE SUB SetObjectRotation (obj AS ANY, rx!, ry!, rz!)
-DECLARE SUB RenderObject3D (obj AS ANY)
-DECLARE SUB TransformObject3D (obj AS ANY)
-DECLARE SUB AddVertex (x%, y%, z%)
-DECLARE SUB AddTriangleIndices (i0%, i1%, i2%)
-DECLARE SUB ResetElementAddIndices ()
-
-DECLARE SUB InitObject3Dcube (params AS ANY, obj AS ANY)
-DECLARE SUB InitObject3Dsphere (params AS ANY, obj AS ANY)
-DECLARE SUB InitObject3Dtorus (params AS ANY, obj AS ANY)
-DECLARE SUB InitObject3D (params AS ANY, obj AS ANY)
-DECLARE SUB LoadObject3D (objFile$, obj AS ANY)
-
-
-' ---- Common Consts ----
-
-CONST SCRWIDTH% = 320
-CONST SCRHEIGHT% = 200
-CONST SCRWIDTH2% = SCRWIDTH% \ 2
-CONST SCRHEIGHT2% = SCRHEIGHT% \ 2
-
-CONST FALSE% = 0
-CONST TRUE% = 1
-
-CONST PI! = 3.14159265359#
-
-' ---- Engine Stuff ----
-
-CONST BLURSWITCH% = 0   ' blur will overflow in interpreter only compiled exe
-
-CONST FPRAST% = 64
-CONST FPNORM% = 64
-
-CONST ZBUCKETSIZE% = 16
-CONST ZBUCKETMAX% = 2048
-CONST ZBUCKETS% = ZBUCKETMAX% / ZBUCKETSIZE%
-CONST ZBUCKETPOLYS% = 64
-CONST LEFTOVERSSIZE% = 512
-
-DIM SHARED zBucket%(0 TO ZBUCKETS%, 0 TO ZBUCKETPOLYS%)
-' Value 0 in ZBUCKETPOLYS% will really be the counter of num polys in list or next poly to add
-DIM SHARED zBucketLeftovers%(0 TO LEFTOVERSSIZE%)
-' Polys that don't fit in buckets anymore or over ZBUCKETMAX%
-' Value 0 in this array will be again the current count
-
-DIM SHARED minZbucket%
-DIM SHARED maxZbucket%
-
-CONST maxTempVertices% = 1024
-CONST avgObjVertexNum% = 256
-CONST maxObjectsOnScreen% = 4
-CONST maxVertices% = maxObjectsOnScreen% * avgObjVertexNum%
-CONST maxPolys% = 2 * maxVertices%
-
-
-' ---- Object Selector ----
-
-DIM SHARED currentObject%
-DIM SHARED objectLoadFile$
-
-CONST objGenCube% = 0
-CONST objGenDotCube% = 1
-CONST objGenSphere% = 2
-CONST objGenTorus% = 3
-CONST objLoadTest% = 4
-CONST objLoadTeapot% = 5
-CONST objLoadMask% = 6
-CONST numObjects% = 7
-
-CONST renderTypeDots% = 0
-CONST renderTypeWire% = 1
-CONST renderTypePoly% = 2
-
-
-CLS
-FILES "*.plg"
-PRINT
-INPUT "Load: ", objFile$
-
-IF objFile$ = "" THEN
-    SetCurrentObject objGenCube%, ""
-ELSE
-    SetCurrentObject objLoadTest%, objFile$
-END IF
-
-
-' ---- Engine Data Types ----
-
+DECLARE SUB DrawEdgesTextured ()
+DECLARE SUB DrawEdgesGouraud (col%)
 TYPE Vertex3D
     x AS INTEGER
     y AS INTEGER
     z AS INTEGER
+END TYPE
+
+TYPE Element3D
+    x AS INTEGER
+    y AS INTEGER
+    z AS INTEGER
+    c AS INTEGER
+    u AS INTEGER
+    v AS INTEGER
+END TYPE
+
+TYPE Edge
+    x AS INTEGER
+    c AS INTEGER
+    u AS INTEGER
+    v AS INTEGER
 END TYPE
 
 TYPE Vector3D
@@ -153,15 +34,15 @@ TYPE IVector3D
     z AS INTEGER
 END TYPE
 
+TYPE Range3D
+    min AS Vector3D
+    max AS Vector3D
+END TYPE
+
 
 TYPE PolyData
     col AS INTEGER
     shade AS INTEGER
-END TYPE
-
-TYPE ObjGenParams
-    index AS INTEGER
-    size AS INTEGER
 END TYPE
 
 TYPE Object3D
@@ -183,16 +64,156 @@ TYPE Object3D
     rotation AS Vector3D
 END TYPE
 
-TYPE Edge
-    x AS INTEGER
+TYPE ObjGenParams
+    index AS INTEGER
+    size AS INTEGER
 END TYPE
 
-TYPE Range3D
-    min AS Vector3D
-    max AS Vector3D
-END TYPE
 
-' ---- Main Arrays ----
+' ---- Common Consts ----
+
+CONST SCRWIDTH% = 320
+CONST SCRHEIGHT% = 200
+CONST SCRWIDTH2% = SCRWIDTH% \ 2
+CONST SCRHEIGHT2% = SCRHEIGHT% \ 2
+
+CONST FALSE% = 0
+CONST TRUE% = 1
+
+CONST PI! = 3.14159265359#
+
+
+' ---- Main Functions ----
+
+DECLARE SUB InitPrecalcs ()
+
+DECLARE SUB SetDefaultPalette ()
+DECLARE SUB DisplayPalette ()
+
+DECLARE SUB ClearVram ()
+DECLARE SUB WriteVram ()
+DECLARE SUB WaitForVsync ()
+
+
+' ---- FX functions  ----
+
+DECLARE SUB ClearBlurJunk ()
+DECLARE SUB BlurVram ()
+DECLARE SUB BlurVramX ()
+DECLARE SUB BlurVramY ()
+
+
+' ---- Vector Math functions ----
+
+DECLARE SUB CalcRotMatrix (rot AS Vector3D)
+DECLARE SUB InvertMatrix (srcMat!(), dstMat!())
+DECLARE SUB MulMatWithVector3D (srcVec AS Vector3D, dstVec AS Vector3D, mat!())
+
+DECLARE SUB SubIVec (vSrc1 AS IVector3D, vSrc2 AS IVector3D, vDst AS IVector3D)
+DECLARE SUB DotIVec (vSrc1 AS IVector3D, vSrc2 AS IVector3D, iDst%)
+DECLARE SUB CrossIVec (vSrc1 AS IVector3D, vSrc2 AS IVector3D, vDst AS IVector3D)
+DECLARE SUB NormIVec (v AS IVector3D)
+
+
+' ---- Object generation functions ----
+
+DECLARE SUB GenObject3D (params AS ObjGenParams, obj AS Object3D)
+DECLARE SUB GenObject3Dcube (params AS ObjGenParams, obj AS Object3D)
+DECLARE SUB GenObject3DdotCube (params AS ObjGenParams, obj AS Object3D)
+DECLARE SUB GenObject3Dsphere (params AS ObjGenParams, obj AS Object3D)
+DECLARE SUB GenObject3Dtorus (params AS ObjGenParams, obj AS Object3D)
+
+DECLARE SUB ResetElementAddIndices ()
+DECLARE SUB AddVertex (x%, y%, z%)
+DECLARE SUB AddLineIndices (i0%, i1%)
+DECLARE SUB AddTriangleIndices (i0%, i1%, i2%)
+
+DECLARE SUB CalcObjectPolyNormals (obj AS Object3D)
+
+DECLARE SUB AddPolyNormal (x%, y%, z%)
+DECLARE SUB AddVertexNormal (x%, y%, z%)
+
+DECLARE SUB CalcObjectVerticesRange (obj AS Object3D, range AS ANY)
+DECLARE SUB FindObjectScaleToFit (obj AS Object3D, desiredRange!, scale!)
+DECLARE SUB ScaleObjectVertices (obj AS Object3D, scale!)
+
+DECLARE SUB CenterObjectVertices (obj AS Object3D)
+DECLARE SUB FlipPolygonOrientation (obj AS Object3D)
+
+
+' ---- Object loading functions ----
+
+DECLARE SUB LoadObject3D (objFile$, obj AS Object3D)
+
+DECLARE SUB ReadLineStringFromPlg (fileHandle%, bufDst$)
+DECLARE SUB ReadLineValues (inp$, out$(), numVals%)
+
+
+' ---- Rendering functions  ----
+
+DECLARE SUB RenderObject3Ddots (obj AS Object3D)
+DECLARE SUB RenderObject3Dwire (obj AS Object3D)
+DECLARE SUB RenderObject3Dpoly (obj AS Object3D)
+DECLARE SUB SortObject3Dpoly (obj AS Object3D)
+
+DECLARE SUB PlotPixel (x%, y%, col%)
+DECLARE SUB DrawPoly (i%, polyIndex%)
+
+DECLARE SUB PrepareEdgeListFlat (e0 AS Element3D, e1 AS Element3D)
+DECLARE SUB PrepareEdgeListGouraud (e0 AS Element3D, e1 AS Element3D)
+DECLARE SUB PrepareEdgeListTextured (e0 AS Element3D, e1 AS Element3D)
+
+DECLARE SUB CalcObjectPolyLighting (obj AS Object3D, light AS ANY)
+
+DECLARE SUB DrawEdges (col%)
+
+' ---- Object transformation functions ----
+
+DECLARE SUB SetObjectPosition (obj AS Object3D, px!, py!, pz!)
+DECLARE SUB SetObjectRotation (obj AS Object3D, rx!, ry!, rz!)
+DECLARE SUB RenderObject3D (obj AS Object3D)
+DECLARE SUB TransformObject3D (obj AS Object3D)
+
+
+' ---- Scene management functions ----
+
+DECLARE SUB SetCurrentObject (objNum%, objFile$)
+DECLARE SUB InitScene3D ()
+DECLARE SUB RunScene3D (t!)
+
+
+
+' ---- Engine Consts ----
+
+CONST BLURSWITCH% = 0   ' blur will overflow in interpreter only compiled exe
+
+CONST FPRAST% = 64
+CONST FPNORM% = 64
+
+CONST renderTypeDots% = 0
+CONST renderTypeWire% = 1
+CONST renderTypePoly% = 2
+
+CONST ZBUCKETSIZE% = 16
+CONST ZBUCKETMAX% = 2048
+CONST ZBUCKETS% = ZBUCKETMAX% / ZBUCKETSIZE%
+CONST ZBUCKETPOLYS% = 64
+CONST LEFTOVERSSIZE% = 512
+
+
+' ---- Zbucket arrays ----
+
+DIM SHARED zBucket%(0 TO ZBUCKETS%, 0 TO ZBUCKETPOLYS%)
+' Value 0 in ZBUCKETPOLYS% will really be the counter of num polys in list or next poly to add
+DIM SHARED zBucketLeftovers%(0 TO LEFTOVERSSIZE%)
+' Polys that don't fit in buckets anymore or over ZBUCKETMAX%
+' Value 0 in this array will be again the current count
+
+DIM SHARED minZbucket%
+DIM SHARED maxZbucket%
+
+
+' ---- Main arrays ----
 
 '$DYNAMIC
 
@@ -202,10 +223,31 @@ vram%(1) = 200
 
 '$STATIC
 
+
+' ---- Object pool sizes ----
+
+CONST maxObjVertices% = 1024
+CONST avgObjVertexNum% = 256
+CONST maxObjectsOnScreen% = 4
+CONST maxVertices% = maxObjectsOnScreen% * avgObjVertexNum%
+CONST maxPolys% = 2 * maxVertices%
+
+
+' ---- Object arrays and engine shared variables ----
+
+CONST objGenCube% = 0
+CONST objGenDotCube% = 1
+CONST objGenSphere% = 2
+CONST objGenTorus% = 3
+CONST objLoadTest% = 4
+CONST objLoadTeapot% = 5
+CONST objLoadMask% = 6
+CONST numObjects% = 7
+
 DIM SHARED object(0 TO numObjects% - 1) AS Object3D
 
-DIM SHARED screenVertices(0 TO maxTempVertices% - 1) AS Vertex3D
-DIM SHARED transformedVertexNormals(0 TO maxTempVertices% - 1) AS IVector3D
+DIM SHARED screenVertices(0 TO maxObjVertices% - 1) AS Element3D
+DIM SHARED transformedVertexNormals(0 TO maxObjVertices% - 1) AS IVector3D
 
 DIM SHARED objectVertices(0 TO maxVertices% - 1) AS Vertex3D
 DIM SHARED objectPolyIndices%(0 TO 3 * maxPolys% - 1)
@@ -228,6 +270,23 @@ DIM SHARED polyEdge(0 TO 1, 0 TO SCRHEIGHT% - 1) AS Edge
 DIM SHARED rotMat(0 TO 8) AS SINGLE
 
 DIM SHARED light1 AS Vector3D
+
+
+' ---- Object Selector ----
+
+DIM SHARED currentObject%
+DIM SHARED objectLoadFile$
+
+CLS
+FILES "*.plg"
+PRINT
+INPUT "Load: ", objFile$
+
+IF objFile$ = "" THEN
+    SetCurrentObject objGenCube%, ""
+ELSE
+    SetCurrentObject objLoadTest%, objFile$
+END IF
 
 
 ' ---- Init ----
@@ -607,15 +666,82 @@ SUB DrawEdges (col%)
 
 END SUB
 
+SUB DrawEdgesGouraud (col%)
+
+    screenSeg& = VARSEG(vram%(0))
+    ys% = edgeYmin% * (SCRWIDTH% \ 16)
+
+    yEnd% = edgeYmax% - 1 ' one less edge bottom to avoid overdraw
+    FOR y% = edgeYmin% TO yEnd%
+        xs0% = polyEdge(0, y%).x
+        xs1% = polyEdge(1, y%).x - 1 ' one less pixel right to avoid overdraw
+
+        c0% = (col% + polyEdge(0, y%).c) * FPRAST%
+        c1% = (col% + polyEdge(1, y%).c) * FPRAST%
+        IF xs1% > xs0% THEN dc% = (c1% - c0%) \ (xs1% - xs0%)
+
+        IF xs0% < 0 THEN xs0% = 0
+        IF xs1% > SCRWIDTH% - 1 THEN xs1% = SCRWIDTH% - 1
+
+        IF xs1% >= xs0% THEN
+            DEF SEG = screenSeg& + ys%
+
+            FOR x% = xs0% TO xs1%
+                POKE 4 + x%, c0% \ FPRAST%
+                c0% = c0% + dc%
+            NEXT x%
+
+        END IF
+
+        ys% = ys% + (SCRWIDTH% \ 16)
+    NEXT y%
+
+END SUB
+
+SUB DrawEdgesTextured
+
+    screenSeg& = VARSEG(vram%(0))
+    ys% = edgeYmin% * (SCRWIDTH% \ 16)
+
+    yEnd% = edgeYmax% - 1 ' one less edge bottom to avoid overdraw
+    FOR y% = edgeYmin% TO yEnd%
+        xs0% = polyEdge(0, y%).x
+        xs1% = polyEdge(1, y%).x - 1 ' one less pixel right to avoid overdraw
+
+        u0% = polyEdge(0, y%).u * FPRAST%: u1% = polyEdge(1, y%).u * FPRAST%
+        v0% = polyEdge(0, y%).v * FPRAST%: v1% = polyEdge(1, y%).v * FPRAST%
+        IF xs1% > xs0% THEN
+            du% = (u1% - u0%) \ (xs1% - xs0%)
+            dv% = (v1% - v0%) \ (xs1% - xs0%)
+        END IF
+
+        IF xs0% < 0 THEN xs0% = 0
+        IF xs1% > SCRWIDTH% - 1 THEN xs1% = SCRWIDTH% - 1
+
+        IF xs1% >= xs0% THEN
+            DEF SEG = screenSeg& + ys%
+
+            FOR x% = xs0% TO xs1%
+                u% = u0% \ FPRAST
+                v% = v0% \ FPRAST%
+                POKE 4 + x%, u% XOR v%
+                u0% = u0% + du%
+                v0% = v0% + dv%
+            NEXT x%
+
+        END IF
+
+        ys% = ys% + (SCRWIDTH% \ 16)
+    NEXT y%
+
+END SUB
+
 SUB DrawPoly (i%, polyIndex%)
 
     i0% = objectPolyIndices%(i%)
     i1% = objectPolyIndices%(i% + 1)
     i2% = objectPolyIndices%(i% + 2)
 
-    x0% = screenVertices(i0%).x
-    x1% = screenVertices(i1%).x
-    x2% = screenVertices(i2%).x
     y0% = screenVertices(i0%).y
     y1% = screenVertices(i1%).y
     y2% = screenVertices(i2%).y
@@ -631,13 +757,28 @@ SUB DrawPoly (i%, polyIndex%)
     IF edgeYmax% > SCRHEIGHT% - 1 THEN edgeYmax% = SCRHEIGHT% - 1
 
     IF edgeYmax% > edgeYmin% THEN
-        PrepareEdgeList x0%, y0%, x1%, y1%
-        PrepareEdgeList x1%, y1%, x2%, y2%
-        PrepareEdgeList x2%, y2%, x0%, y0%
+        ' it used to be that I passed parameters as variables from top
+        ' like 10-12 params instead of the screenVertices(ix%) which would seem to be faster
+        ' But it dropped performance even for flat.
+        ' However because this is more elegant than the previous, I'll keep it and revisit later to write the ugly version if I need the performance.
 
-        col% = objectPolygons(polyIndex%).col + objectPolygons(polyIndex%).shade
+        'PrepareEdgeListFlat screenVertices(i0%), screenVertices(i1%)
+        'PrepareEdgeListFlat screenVertices(i1%), screenVertices(i2%)
+        'PrepareEdgeListFlat screenVertices(i2%), screenVertices(i0%)
+        'col% = objectPolygons(polyIndex%).col + objectPolygons(polyIndex%).shade
+        'DrawEdgesFlat col%
 
-        DrawEdges col%
+        'PrepareEdgeListGouraud screenVertices(i0%), screenVertices(i1%)
+        'PrepareEdgeListGouraud screenVertices(i1%), screenVertices(i2%)
+        'PrepareEdgeListGouraud screenVertices(i2%), screenVertices(i0%)
+        'col% = objectPolygons(polyIndex%).col
+        'DrawEdgesGouraud col%
+
+        PrepareEdgeListTextured screenVertices(i0%), screenVertices(i1%)
+        PrepareEdgeListTextured screenVertices(i1%), screenVertices(i2%)
+        PrepareEdgeListTextured screenVertices(i2%), screenVertices(i0%)
+        DrawEdgesTextured
+
     END IF
 
 END SUB
@@ -751,12 +892,12 @@ SUB GenObject3Dcube (params AS ObjGenParams, obj AS Object3D)
 
 END SUB
 
-SUB GenObject3DdotCube (params AS ObjGenParams, object AS Object3D)
+SUB GenObject3DdotCube (params AS ObjGenParams, obj AS Object3D)
 
-    object.numVertices = 512
-    object.numPolys = 0
-    object.numPolyIndices = 0
-    object.numLineIndices = 0
+    obj.numVertices = 512
+    obj.numPolys = 0
+    obj.numPolyIndices = 0
+    obj.numLineIndices = 0
 
     halfSize% = params.size
 
@@ -785,13 +926,21 @@ SUB InitPrecalcs
     FOR i& = 0 TO maxPolys% - 1
         'c% = (32 + ((16 * i&) AND 63)) AND 255
 
-        'c% = (i& AND 1) * 64
-        c% = 0
+        c% = (i& AND 1) * 64
+        'c% = 0
 
         IF BLURSWITCH% = 1 THEN c% = c% AND 63
 
         objectPolygons(i&).col = c%
     NEXT i&
+
+' Also randomize vertex gouraud coloring and coordinates for now
+
+    FOR i% = 0 TO maxObjVertices% - 1
+        screenVertices(i%).c = INT(RND * 255) AND 63
+        screenVertices(i%).u = (i% * 8) AND 63 'INT(RND * 255) AND 255
+        screenVertices(i%).v = (i% * 16) AND 127 'i% * INT(RND * 255) AND 255
+    NEXT i%
 
 END SUB
 
@@ -949,18 +1098,21 @@ SUB PlotPixel (x%, y%, col%)
 
 END SUB
 
-SUB PrepareEdgeList (x0%, y0%, x1%, y1%)
+SUB PrepareEdgeListFlat (e0 AS Element3D, e1 AS Element3D)
+
+    y0% = e0.y
+    y1% = e1.y
 
     IF y0% <> y1% THEN
 
         IF (y0% < y1%) THEN
             edgeIndex% = 0
-            xs0% = x0%: ys0% = y0%
-            xs1% = x1%: ys1% = y1%
+            xs0% = e0.x: ys0% = y0%
+            xs1% = e1.x: ys1% = y1%
         ELSE
             edgeIndex% = 1
-            xs0% = x1%: ys0% = y1%
-            xs1% = x0%: ys1% = y0%
+            xs0% = e1.x: ys0% = y1%
+            xs1% = e0.x: ys1% = y0%
         END IF
 
         xs0% = xs0% * FPRAST%
@@ -973,6 +1125,89 @@ SUB PrepareEdgeList (x0%, y0%, x1%, y1%)
                 polyEdge(edgeIndex%, y%).x = xs0% \ FPRAST%
             END IF
             xs0% = xs0% + dx%
+        NEXT y%
+
+    END IF
+
+END SUB
+
+SUB PrepareEdgeListGouraud (e0 AS Element3D, e1 AS Element3D)
+
+    y0% = e0.y
+    y1% = e1.y
+
+    IF y0% <> y1% THEN
+
+        IF (y0% < y1%) THEN
+            edgeIndex% = 0
+            xs0% = e0.x: ys0% = y0%: cs0% = e0.c
+            xs1% = e1.x: ys1% = y1%: cs1% = e1.c
+        ELSE
+            edgeIndex% = 1
+            xs0% = e1.x: ys0% = y1%: cs0% = e1.c
+            xs1% = e0.x: ys1% = y0%: cs1% = e0.c
+        END IF
+
+        xs0% = xs0% * FPRAST%
+        xs1% = xs1% * FPRAST%
+        cs0% = cs0% * FPRAST%
+        cs1% = cs1% * FPRAST%
+
+        dy% = ys1% - ys0%
+        dx% = (xs1% - xs0%) \ dy%
+        dc% = (cs1% - cs0%) \ dy%
+
+        FOR y% = ys0% TO ys1% - 1
+            IF y% >= 0 AND y% < SCRHEIGHT% THEN
+                polyEdge(edgeIndex%, y%).x = xs0% \ FPRAST%
+                polyEdge(edgeIndex%, y%).c = cs0% \ FPRAST%
+            END IF
+            xs0% = xs0% + dx%
+            cs0% = cs0% + dc%
+        NEXT y%
+
+    END IF
+
+END SUB
+
+SUB PrepareEdgeListTextured (e0 AS Element3D, e1 AS Element3D)
+
+    y0% = e0.y
+    y1% = e1.y
+
+    IF y0% <> y1% THEN
+
+        IF (y0% < y1%) THEN
+            edgeIndex% = 0
+            xs0% = e0.x: ys0% = y0%: us0% = e0.u: vs0% = e0.v
+            xs1% = e1.x: ys1% = y1%: us1% = e1.u: vs1% = e1.v
+        ELSE
+            edgeIndex% = 1
+            xs0% = e1.x: ys0% = y1%: us0% = e1.u: vs0% = e1.v
+            xs1% = e0.x: ys1% = y0%: us1% = e0.u: vs1% = e0.v
+        END IF
+
+        xs0% = xs0% * FPRAST%
+        xs1% = xs1% * FPRAST%
+        us0% = us0% * FPRAST%
+        us1% = us1% * FPRAST%
+        vs0% = vs0% * FPRAST%
+        vs1% = vs1% * FPRAST%
+
+        dy% = ys1% - ys0%
+        dx% = (xs1% - xs0%) \ dy%
+        du% = (us1% - us0%) \ dy%
+        dv% = (vs1% - vs0%) \ dy%
+
+        FOR y% = ys0% TO ys1% - 1
+            IF y% >= 0 AND y% < SCRHEIGHT% THEN
+                polyEdge(edgeIndex%, y%).x = xs0% \ FPRAST%
+                polyEdge(edgeIndex%, y%).u = us0% \ FPRAST%
+                polyEdge(edgeIndex%, y%).v = vs0% \ FPRAST%
+            END IF
+            xs0% = xs0% + dx%
+            us0% = us0% + du%
+            vs0% = vs0% + dv%
         NEXT y%
 
     END IF
