@@ -1,5 +1,3 @@
-DECLARE SUB DrawEdgesTextured ()
-DECLARE SUB DrawEdgesGouraud (col%)
 TYPE Vertex3D
     x AS INTEGER
     y AS INTEGER
@@ -59,6 +57,7 @@ TYPE Object3D
     numPolys AS INTEGER
 
     renderType AS INTEGER
+    polyStyle AS INTEGER
 
     position AS Vector3D
     rotation AS Vector3D
@@ -90,6 +89,7 @@ DECLARE SUB InitPrecalcs ()
 DECLARE SUB SetDefaultPalette ()
 DECLARE SUB DisplayPalette ()
 
+DECLARE SUB SetVideoSeg (Segment&)
 DECLARE SUB ClearVram ()
 DECLARE SUB WriteVram ()
 DECLARE SUB WaitForVsync ()
@@ -109,7 +109,10 @@ DECLARE SUB CalcRotMatrix (rot AS Vector3D)
 DECLARE SUB InvertMatrix (srcMat!(), dstMat!())
 DECLARE SUB MulMatWithVector3D (srcVec AS Vector3D, dstVec AS Vector3D, mat!())
 
+DECLARE SUB SetIVec (vec AS IVector3D, x%, y%, z%)
+DECLARE SUB AddIVec (vSrc1 AS IVector3D, vSrc2 AS IVector3D, vDst AS IVector3D)
 DECLARE SUB SubIVec (vSrc1 AS IVector3D, vSrc2 AS IVector3D, vDst AS IVector3D)
+DECLARE SUB ScaleIVec (vec AS IVector3D, scale!)
 DECLARE SUB DotIVec (vSrc1 AS IVector3D, vSrc2 AS IVector3D, iDst%)
 DECLARE SUB CrossIVec (vSrc1 AS IVector3D, vSrc2 AS IVector3D, vDst AS IVector3D)
 DECLARE SUB NormIVec (v AS IVector3D)
@@ -129,11 +132,12 @@ DECLARE SUB AddLineIndices (i0%, i1%)
 DECLARE SUB AddTriangleIndices (i0%, i1%, i2%)
 
 DECLARE SUB CalcObjectPolyNormals (obj AS Object3D)
+DECLARE SUB CalcObjectVertexNormals (obj AS Object3D)
 
 DECLARE SUB AddPolyNormal (x%, y%, z%)
 DECLARE SUB AddVertexNormal (x%, y%, z%)
 
-DECLARE SUB CalcObjectVerticesRange (obj AS Object3D, range AS ANY)
+DECLARE SUB CalcObjectVerticesRange (obj AS Object3D, range AS Range3D)
 DECLARE SUB FindObjectScaleToFit (obj AS Object3D, desiredRange!, scale!)
 DECLARE SUB ScaleObjectVertices (obj AS Object3D, scale!)
 
@@ -157,15 +161,20 @@ DECLARE SUB RenderObject3Dpoly (obj AS Object3D)
 DECLARE SUB SortObject3Dpoly (obj AS Object3D)
 
 DECLARE SUB PlotPixel (x%, y%, col%)
-DECLARE SUB DrawPoly (i%, polyIndex%)
+DECLARE SUB DrawPoly (i%, polyIndex%, polyStyle%)
 
-DECLARE SUB PrepareEdgeListFlat (e0 AS Element3D, e1 AS Element3D)
-DECLARE SUB PrepareEdgeListGouraud (e0 AS Element3D, e1 AS Element3D)
-DECLARE SUB PrepareEdgeListTextured (e0 AS Element3D, e1 AS Element3D)
+DECLARE SUB PrepareEdgeListsFlat ()
+DECLARE SUB PrepareEdgeListsGouraud ()
+DECLARE SUB PrepareEdgeListsTextured ()
 
-DECLARE SUB CalcObjectPolyLighting (obj AS Object3D, light AS ANY)
+DECLARE SUB CalcObjectPolyLighting (obj AS Object3D, light AS Vector3D)
+DECLARE SUB CalcObjectVertexLighting (obj AS Object3D, light AS Vector3D)
 
-DECLARE SUB DrawEdges (col%)
+DECLARE SUB DrawEdgesFlat (col%)
+DECLARE SUB DrawEdgesGouraud (col%)
+DECLARE SUB DrawEdgesTextured ()
+
+
 
 ' ---- Object transformation functions ----
 
@@ -194,6 +203,10 @@ CONST renderTypeDots% = 0
 CONST renderTypeWire% = 1
 CONST renderTypePoly% = 2
 
+CONST polyStyleFlat% = 0
+CONST polyStyleGouraud% = 1
+CONST polyStyleTextured% = 2
+
 CONST ZBUCKETSIZE% = 16
 CONST ZBUCKETMAX% = 2048
 CONST ZBUCKETS% = ZBUCKETMAX% / ZBUCKETSIZE%
@@ -217,9 +230,10 @@ DIM SHARED maxZbucket%
 
 '$DYNAMIC
 
-DIM SHARED vram%(0 TO 32001)
-vram%(0) = 320 * 8
-vram%(1) = 200
+DIM SHARED vram%(0 TO 32007)
+
+vram%(6) = 320 * 8
+vram%(7) = 200
 
 '$STATIC
 
@@ -267,6 +281,12 @@ DIM SHARED currentVertexNormalAdd%
 DIM SHARED edgeYmin%, edgeYmax%
 DIM SHARED polyEdge(0 TO 1, 0 TO SCRHEIGHT% - 1) AS Edge
 
+DIM SHARED ex0%, ex1%, ex2%
+DIM SHARED ey0%, ey1%, ey2%
+DIM SHARED ec0%, ec1%, ec2%
+DIM SHARED eu0%, eu1%, eu2%
+DIM SHARED ev0%, ev1%, ev2%
+
 DIM SHARED rotMat(0 TO 8) AS SINGLE
 
 DIM SHARED light1 AS Vector3D
@@ -307,12 +327,14 @@ InitScene3D
 
 freeMem& = FRE(-1)
 
-timeStart! = TIMER
 nframe& = 0
 
+
+timeElapsed! = 0
+
 t! = 0
-DO WHILE INKEY$ = ""
-    'dt! = TIMER - timeStart!
+timeStart! = TIMER
+DO WHILE INKEY$ = "" AND timeElapsed! < 15
 
     IF BLURSWITCH% = 0 THEN ClearVram
 
@@ -332,11 +354,21 @@ DO WHILE INKEY$ = ""
 
     t! = t! + .01
     nframe& = nframe& + 1
+
+    timeElapsed! = TIMER - timeStart!
 LOOP
 timeEnd! = TIMER
 
 PRINT nframe& / (timeEnd! - timeStart!)
 SLEEP
+
+SUB AddIVec (vSrc1 AS IVector3D, vSrc2 AS IVector3D, vDst AS IVector3D)
+
+    vDst.x = vSrc1.x + vSrc2.x
+    vDst.y = vSrc1.y + vSrc2.y
+    vDst.z = vSrc1.z + vSrc2.z
+
+END SUB
 
 SUB AddLineIndices (i0%, i1%)
 
@@ -390,7 +422,7 @@ END SUB
 SUB BlurVram
 
     ' Dirty blur two pixels at once (works only if colors are from 0 to 63)
-    FOR i% = 2 + SCRWIDTH2% TO 2 + SCRWIDTH2% * (SCRHEIGHT% - 1) - 1
+    FOR i% = 8 + 2 + SCRWIDTH2% TO 8 + 2 + SCRWIDTH2% * (SCRHEIGHT% - 1) - 1
         vram%(i%) = ((vram%(i% - 1) + vram%(i% + 1) + vram%(i% - SCRWIDTH2%) + vram%(i% + SCRWIDTH2%)) \ 4) AND &H3F3F
     NEXT i%
 
@@ -401,7 +433,7 @@ END SUB
 SUB BlurVramX
 
     ' Dirty blur two pixels at once (works only if colors are from 0 to 127)
-    FOR i% = 2 + SCRWIDTH% \ 2 TO 2 + (SCRWIDTH% \ 2) * (SCRHEIGHT% - 1) - 1
+    FOR i% = 8 + 2 + SCRWIDTH% \ 2 TO 8 + 2 + (SCRWIDTH% \ 2) * (SCRHEIGHT% - 1) - 1
         vram%(i%) = ((vram%(i% - 1) + vram%(i% + 1)) \ 2) AND &H3F3F
     NEXT i%
 
@@ -412,7 +444,7 @@ END SUB
 SUB BlurVramY
 
     ' Dirty blur two pixels at once (works only if colors are from 0 to 127)
-    FOR i% = 2 + SCRWIDTH2% TO 2 + SCRWIDTH2% * (SCRHEIGHT% - 1) - 1
+    FOR i% = 8 + 2 + SCRWIDTH2% TO 8 + 2 + SCRWIDTH2% * (SCRHEIGHT% - 1) - 1
         vram%(i%) = ((vram%(i% - SCRWIDTH2%) + vram%(i% + SCRWIDTH2%)) \ 2) AND &H3F3F
     NEXT i%
 
@@ -430,9 +462,7 @@ SUB CalcObjectPolyLighting (obj AS Object3D, light AS Vector3D)
 
     MulMatWithVector3D light, rotLight, invRotMat!()
 
-    iLight.x = INT(rotLight.x * FPNORM%)
-    iLight.y = INT(rotLight.y * FPNORM%)
-    iLight.z = INT(rotLight.z * FPNORM%)
+    SetIVec iLight, INT(rotLight.x * FPNORM%), INT(rotLight.y * FPNORM%), INT(rotLight.z * FPNORM%)
 
     offset% = obj.polyNormalsOffset
     n% = offset% + obj.numPolys - 1
@@ -489,6 +519,69 @@ SUB CalcObjectPolyNormals (obj AS Object3D)
         AddPolyNormal norm.x, norm.y, norm.z
 
     NEXT i%
+
+END SUB
+
+SUB CalcObjectVertexLighting (obj AS Object3D, light AS Vector3D)
+
+    DIM rotLight AS Vector3D
+    DIM iLight AS IVector3D
+    DIM invRotMat!(8)
+
+    InvertMatrix rotMat!(), invRotMat!()
+
+    MulMatWithVector3D light, rotLight, invRotMat!()
+
+    SetIVec iLight, INT(rotLight.x * FPNORM%), INT(rotLight.y * FPNORM%), INT(rotLight.z * FPNORM%)
+
+    offset% = obj.vertexNormalsOffset
+    n% = obj.numVertices - 1
+
+    FOR i% = 0 TO n%
+        DotIVec objectVertexNormals(offset% + i%), iLight, d%
+
+        IF d% < 0 THEN d% = 0
+        IF d% > FPNORM% THEN d% = FPNORM%
+
+        screenVertices(i%).c = (63 * d%) \ FPNORM%
+    NEXT i%
+
+END SUB
+
+SUB CalcObjectVertexNormals (obj AS Object3D)
+
+    piOffset% = obj.polyIndicesOffset
+    pnOffset% = obj.polyNormalsOffset
+    n% = offset% + obj.numPolyIndices - 1
+
+    DIM norm AS IVector3D
+
+    FOR j% = 0 TO obj.numVertices - 1
+        SetIVec norm, 0, 0, 0
+        pCount% = 0
+
+        polyNormalIndex% = pnOffset%
+        FOR i% = piOffset% TO n% STEP 3
+
+            i0% = objectPolyIndices%(i%)
+            i1% = objectPolyIndices%(i% + 1)
+            i2% = objectPolyIndices%(i% + 2)
+
+            IF j% = i0% OR j% = i1% OR j% = i2% THEN
+                AddIVec norm, objectPolyNormals(polyNormalIndex%), norm
+                pCount% = pCount% + 1
+            END IF
+
+            polyNormalIndex% = polyNormalIndex% + 1
+
+        NEXT i%
+
+        IF pCount% > 0 THEN
+            ScaleIVec norm, 1! / pCount%
+            NormIVec norm
+            AddVertexNormal norm.x, norm.y, norm.z
+        END IF
+    NEXT j%
 
 END SUB
 
@@ -569,12 +662,12 @@ END SUB
 SUB ClearBlurJunk
 
     ' Clear junk at top scanline
-    FOR i% = 2 TO 2 + SCRWIDTH2% - 1
+    FOR i% = 8 + 2 TO 8 + 2 + SCRWIDTH2% - 1
         vram%(i%) = 0
     NEXT i%
 
     ' Clear junk at bottom scanline
-    FOR i% = 2 + SCRWIDTH2% * (SCRHEIGHT% - 1) TO 2 + SCRWIDTH2% * SCRHEIGHT% - 1
+    FOR i% = 8 + 2 + SCRWIDTH2% * (SCRHEIGHT% - 1) TO 8 + 2 + SCRWIDTH2% * SCRHEIGHT% - 1
         vram%(i%) = 0
     NEXT i%
 
@@ -582,10 +675,10 @@ END SUB
 
 SUB ClearVram
 
-    REDIM vram%(0 TO 32001)
+    REDIM vram%(0 TO 32007)
 
-    vram%(0) = 320 * 8
-    vram%(1) = 200
+    vram%(6) = 320 * 8
+    vram%(7) = 200
 
 END SUB
 
@@ -628,9 +721,9 @@ SUB DotIVec (vSrc1 AS IVector3D, vSrc2 AS IVector3D, iDst%)
 
 END SUB
 
-SUB DrawEdges (col%)
+SUB DrawEdgesFlat (col%)
 
-    screenSeg& = VARSEG(vram%(0))
+    screenSeg& = VARSEG(vram%(0)) + 1
     ys% = edgeYmin% * (SCRWIDTH% \ 16)
 
     yEnd% = edgeYmax% - 1 ' one less edge bottom to avoid overdraw
@@ -642,21 +735,31 @@ SUB DrawEdges (col%)
         IF xs1% > SCRWIDTH% - 1 THEN xs1% = SCRWIDTH% - 1
 
         IF xs1% >= xs0% THEN
+
+            'Idea with horizontal lines and SetVideoSeg to trick Qbasic to LINE on our buffer but below code is faster
+            'LINE (xs0%, y%)-(xs1%, y%), col%
+
             DEF SEG = screenSeg& + ys%
 
+            'Original per pixel loop
+            'FOR x% = xs0% TO xs1%
+                'POKE x%, col%
+            'NEXT x%
+
+            ' Split loop to do two POKEs in one loop unroled and previous the left/right single byte edges if needed
             IF xs0% AND 1 THEN
-                POKE 4 + xs0%, col%
+                POKE xs0%, col%
                 xs0% = xs0% + 1
             END IF
 
             IF NOT xs1% AND 1 THEN
-                POKE 4 + xs1%, col%
+                POKE xs1%, col%
                 xs1% = xs1% - 1
             END IF
 
             FOR x% = xs0% TO xs1% STEP 2
-                POKE 4 + x%, col%
-                POKE 5 + x%, col%
+                POKE x%, col%
+                POKE x% + 1, col%
             NEXT x%
 
         END IF
@@ -668,7 +771,7 @@ END SUB
 
 SUB DrawEdgesGouraud (col%)
 
-    screenSeg& = VARSEG(vram%(0))
+    screenSeg& = VARSEG(vram%(0)) + 1
     ys% = edgeYmin% * (SCRWIDTH% \ 16)
 
     yEnd% = edgeYmax% - 1 ' one less edge bottom to avoid overdraw
@@ -687,7 +790,7 @@ SUB DrawEdgesGouraud (col%)
             DEF SEG = screenSeg& + ys%
 
             FOR x% = xs0% TO xs1%
-                POKE 4 + x%, c0% \ FPRAST%
+                POKE x%, c0% \ FPRAST%
                 c0% = c0% + dc%
             NEXT x%
 
@@ -700,7 +803,7 @@ END SUB
 
 SUB DrawEdgesTextured
 
-    screenSeg& = VARSEG(vram%(0))
+    screenSeg& = VARSEG(vram%(0)) + 1
     ys% = edgeYmin% * (SCRWIDTH% \ 16)
 
     yEnd% = edgeYmax% - 1 ' one less edge bottom to avoid overdraw
@@ -724,7 +827,7 @@ SUB DrawEdgesTextured
             FOR x% = xs0% TO xs1%
                 u% = u0% \ FPRAST
                 v% = v0% \ FPRAST%
-                POKE 4 + x%, u% XOR v%
+                POKE x%, u% XOR v%
                 u0% = u0% + du%
                 v0% = v0% + dv%
             NEXT x%
@@ -736,20 +839,38 @@ SUB DrawEdgesTextured
 
 END SUB
 
-SUB DrawPoly (i%, polyIndex%)
+SUB DrawPoly (i%, polyIndex%, polyStyle%)
 
     i0% = objectPolyIndices%(i%)
     i1% = objectPolyIndices%(i% + 1)
     i2% = objectPolyIndices%(i% + 2)
 
-    y0% = screenVertices(i0%).y
-    y1% = screenVertices(i1%).y
-    y2% = screenVertices(i2%).y
+    ex0% = screenVertices(i0%).x
+    ex1% = screenVertices(i1%).x
+    ex2% = screenVertices(i2%).x
+    ey0% = screenVertices(i0%).y
+    ey1% = screenVertices(i1%).y
+    ey2% = screenVertices(i2%).y
 
-    min% = y0%
+    IF polyStyle% = polyStyleGouraud% THEN
+        ec0% = screenVertices(i0%).c
+        ec1% = screenVertices(i1%).c
+        ec2% = screenVertices(i2%).c
+    END IF
+
+    IF polyStyle% = polyStyleTextured% THEN
+        eu0% = screenVertices(i0%).u
+        eu1% = screenVertices(i1%).u
+        eu2% = screenVertices(i2%).u
+        ev0% = screenVertices(i0%).v
+        ev1% = screenVertices(i1%).v
+        ev2% = screenVertices(i2%).v
+    END IF
+
+    min% = ey0%
     max% = min%
-    IF y1% < min% THEN min% = y1% ELSE IF y1% > max% THEN max% = y1%
-    IF y2% < min% THEN min% = y2% ELSE IF y2% > max% THEN max% = y2%
+    IF ey1% < min% THEN min% = ey1% ELSE IF ey1% > max% THEN max% = ey1%
+    IF ey2% < min% THEN min% = ey2% ELSE IF ey2% > max% THEN max% = ey2%
     edgeYmin% = min%
     edgeYmax% = max%
 
@@ -757,28 +878,25 @@ SUB DrawPoly (i%, polyIndex%)
     IF edgeYmax% > SCRHEIGHT% - 1 THEN edgeYmax% = SCRHEIGHT% - 1
 
     IF edgeYmax% > edgeYmin% THEN
-        ' it used to be that I passed parameters as variables from top
-        ' like 10-12 params instead of the screenVertices(ix%) which would seem to be faster
-        ' But it dropped performance even for flat.
-        ' However because this is more elegant than the previous, I'll keep it and revisit later to write the ugly version if I need the performance.
 
-        'PrepareEdgeListFlat screenVertices(i0%), screenVertices(i1%)
-        'PrepareEdgeListFlat screenVertices(i1%), screenVertices(i2%)
-        'PrepareEdgeListFlat screenVertices(i2%), screenVertices(i0%)
-        'col% = objectPolygons(polyIndex%).col + objectPolygons(polyIndex%).shade
-        'DrawEdgesFlat col%
+        SELECT CASE polyStyle%
 
-        'PrepareEdgeListGouraud screenVertices(i0%), screenVertices(i1%)
-        'PrepareEdgeListGouraud screenVertices(i1%), screenVertices(i2%)
-        'PrepareEdgeListGouraud screenVertices(i2%), screenVertices(i0%)
-        'col% = objectPolygons(polyIndex%).col
-        'DrawEdgesGouraud col%
+            CASE polyStyleFlat%
+                PrepareEdgeListsFlat
+                col% = objectPolygons(polyIndex%).col + objectPolygons(polyIndex%).shade
+                DrawEdgesFlat col%
 
-        PrepareEdgeListTextured screenVertices(i0%), screenVertices(i1%)
-        PrepareEdgeListTextured screenVertices(i1%), screenVertices(i2%)
-        PrepareEdgeListTextured screenVertices(i2%), screenVertices(i0%)
-        DrawEdgesTextured
+            CASE polyStyleGouraud%
+                PrepareEdgeListsGouraud
+                col% = objectPolygons(polyIndex%).col
+                DrawEdgesGouraud col%
 
+            CASE polyStyleTextured%
+                PrepareEdgeListsTextured
+                DrawEdgesTextured
+
+            CASE ELSE
+        END SELECT
     END IF
 
 END SUB
@@ -840,6 +958,7 @@ SUB GenObject3D (params AS ObjGenParams, obj AS Object3D)
     END SELECT
 
     CalcObjectPolyNormals obj
+    CalcObjectVertexNormals obj
 
 END SUB
 
@@ -926,8 +1045,8 @@ SUB InitPrecalcs
     FOR i& = 0 TO maxPolys% - 1
         'c% = (32 + ((16 * i&) AND 63)) AND 255
 
-        c% = (i& AND 1) * 64
-        'c% = 0
+        'c% = (i& AND 1) * 64
+        c% = 0
 
         IF BLURSWITCH% = 1 THEN c% = c% AND 63
 
@@ -951,6 +1070,7 @@ SUB InitScene3D
     CONST defaultScaleRange! = 1024 - 128
 
     object(currentObject%).renderType = renderTypePoly%
+    object(currentObject%).polyStyle = polyStyleGouraud%
     mustFlipPolygonOrientation% = FALSE%
 
     SELECT CASE currentObject%
@@ -989,6 +1109,7 @@ SUB InitScene3D
         IF mustFlipPolygonOrientation% THEN FlipPolygonOrientation object(currentObject%)
    
         CalcObjectPolyNormals object(currentObject%)
+        CalcObjectVertexNormals object(currentObject%)
     END IF
 
 END SUB
@@ -1091,28 +1212,77 @@ END SUB
 
 SUB PlotPixel (x%, y%, col%)
 
-    screenSeg& = VARSEG(vram%(0))
+    screenSeg& = VARSEG(vram%(0)) + 1
 
     DEF SEG = screenSeg& + y% * 20
-    POKE 4 + x%, col%
+    POKE x%, col%
 
 END SUB
 
-SUB PrepareEdgeListFlat (e0 AS Element3D, e1 AS Element3D)
+SUB PrepareEdgeListsFlat
 
-    y0% = e0.y
-    y1% = e1.y
+    IF ey0% <> ey1% THEN
 
-    IF y0% <> y1% THEN
-
-        IF (y0% < y1%) THEN
+        IF (ey0% < ey1%) THEN
             edgeIndex% = 0
-            xs0% = e0.x: ys0% = y0%
-            xs1% = e1.x: ys1% = y1%
+            xs0% = ex0%: ys0% = ey0%
+            xs1% = ex1%: ys1% = ey1%
         ELSE
             edgeIndex% = 1
-            xs0% = e1.x: ys0% = y1%
-            xs1% = e0.x: ys1% = y0%
+            xs0% = ex1%: ys0% = ey1%
+            xs1% = ex0%: ys1% = ey0%
+        END IF
+
+        xs0% = xs0% * FPRAST%
+        xs1% = xs1% * FPRAST%
+        dy% = ys1% - ys0%
+        dx% = (xs1% - xs0%) \ dy%
+
+        FOR y% = ys0% TO ys1% - 1
+            IF y% >= 0 AND y% < SCRHEIGHT% THEN
+                polyEdge(edgeIndex%, y%).x = xs0% \ FPRAST%
+            END IF
+            xs0% = xs0% + dx%
+        NEXT y%
+
+    END IF
+
+    IF ey1% <> ey2% THEN
+
+        IF (ey1% < ey2%) THEN
+            edgeIndex% = 0
+            xs0% = ex1%: ys0% = ey1%
+            xs1% = ex2%: ys1% = ey2%
+        ELSE
+            edgeIndex% = 1
+            xs0% = ex2%: ys0% = ey2%
+            xs1% = ex1%: ys1% = ey1%
+        END IF
+
+        xs0% = xs0% * FPRAST%
+        xs1% = xs1% * FPRAST%
+        dy% = ys1% - ys0%
+        dx% = (xs1% - xs0%) \ dy%
+
+        FOR y% = ys0% TO ys1% - 1
+            IF y% >= 0 AND y% < SCRHEIGHT% THEN
+                polyEdge(edgeIndex%, y%).x = xs0% \ FPRAST%
+            END IF
+            xs0% = xs0% + dx%
+        NEXT y%
+
+    END IF
+
+    IF ey2% <> ey0% THEN
+
+        IF (ey2% < ey0%) THEN
+            edgeIndex% = 0
+            xs0% = ex2%: ys0% = ey2%
+            xs1% = ex0%: ys1% = ey0%
+        ELSE
+            edgeIndex% = 1
+            xs0% = ex0%: ys0% = ey0%
+            xs1% = ex2%: ys1% = ey2%
         END IF
 
         xs0% = xs0% * FPRAST%
@@ -1131,21 +1301,84 @@ SUB PrepareEdgeListFlat (e0 AS Element3D, e1 AS Element3D)
 
 END SUB
 
-SUB PrepareEdgeListGouraud (e0 AS Element3D, e1 AS Element3D)
+SUB PrepareEdgeListsGouraud
 
-    y0% = e0.y
-    y1% = e1.y
+    IF ey0% <> ey1% THEN
 
-    IF y0% <> y1% THEN
-
-        IF (y0% < y1%) THEN
+        IF (ey0% < ey1%) THEN
             edgeIndex% = 0
-            xs0% = e0.x: ys0% = y0%: cs0% = e0.c
-            xs1% = e1.x: ys1% = y1%: cs1% = e1.c
+            xs0% = ex0%: ys0% = ey0%: cs0% = ec0%
+            xs1% = ex1%: ys1% = ey1%: cs1% = ec1%
         ELSE
             edgeIndex% = 1
-            xs0% = e1.x: ys0% = y1%: cs0% = e1.c
-            xs1% = e0.x: ys1% = y0%: cs1% = e0.c
+            xs0% = ex1%: ys0% = ey1%: cs0% = ec1%
+            xs1% = ex0%: ys1% = ey0%: cs1% = ec0%
+        END IF
+
+        xs0% = xs0% * FPRAST%
+        xs1% = xs1% * FPRAST%
+        cs0% = cs0% * FPRAST%
+        cs1% = cs1% * FPRAST%
+
+        dy% = ys1% - ys0%
+        dx% = (xs1% - xs0%) \ dy%
+        dc% = (cs1% - cs0%) \ dy%
+
+        FOR y% = ys0% TO ys1% - 1
+            IF y% >= 0 AND y% < SCRHEIGHT% THEN
+                polyEdge(edgeIndex%, y%).x = xs0% \ FPRAST%
+                polyEdge(edgeIndex%, y%).c = cs0% \ FPRAST%
+            END IF
+            xs0% = xs0% + dx%
+            cs0% = cs0% + dc%
+        NEXT y%
+
+    END IF
+
+
+    IF ey1% <> ey2% THEN
+
+        IF (ey1% < ey2%) THEN
+            edgeIndex% = 0
+            xs0% = ex1%: ys0% = ey1%: cs0% = ec1%
+            xs1% = ex2%: ys1% = ey2%: cs1% = ec2%
+        ELSE
+            edgeIndex% = 1
+            xs0% = ex2%: ys0% = ey2%: cs0% = ec2%
+            xs1% = ex1%: ys1% = ey1%: cs1% = ec1%
+        END IF
+
+        xs0% = xs0% * FPRAST%
+        xs1% = xs1% * FPRAST%
+        cs0% = cs0% * FPRAST%
+        cs1% = cs1% * FPRAST%
+
+        dy% = ys1% - ys0%
+        dx% = (xs1% - xs0%) \ dy%
+        dc% = (cs1% - cs0%) \ dy%
+
+        FOR y% = ys0% TO ys1% - 1
+            IF y% >= 0 AND y% < SCRHEIGHT% THEN
+                polyEdge(edgeIndex%, y%).x = xs0% \ FPRAST%
+                polyEdge(edgeIndex%, y%).c = cs0% \ FPRAST%
+            END IF
+            xs0% = xs0% + dx%
+            cs0% = cs0% + dc%
+        NEXT y%
+
+    END IF
+
+
+    IF ey2% <> ey0% THEN
+
+        IF (ey2% < ey0%) THEN
+            edgeIndex% = 0
+            xs0% = ex2%: ys0% = ey2%: cs0% = ec2%
+            xs1% = ex0%: ys1% = ey0%: cs1% = ec0%
+        ELSE
+            edgeIndex% = 1
+            xs0% = ex0%: ys0% = ey0%: cs0% = ec0%
+            xs1% = ex2%: ys1% = ey2%: cs1% = ec2%
         END IF
 
         xs0% = xs0% * FPRAST%
@@ -1170,21 +1403,94 @@ SUB PrepareEdgeListGouraud (e0 AS Element3D, e1 AS Element3D)
 
 END SUB
 
-SUB PrepareEdgeListTextured (e0 AS Element3D, e1 AS Element3D)
+SUB PrepareEdgeListsTextured
 
-    y0% = e0.y
-    y1% = e1.y
+    IF ey0% <> ey1% THEN
 
-    IF y0% <> y1% THEN
-
-        IF (y0% < y1%) THEN
+        IF (ey0% < ey1%) THEN
             edgeIndex% = 0
-            xs0% = e0.x: ys0% = y0%: us0% = e0.u: vs0% = e0.v
-            xs1% = e1.x: ys1% = y1%: us1% = e1.u: vs1% = e1.v
+            xs0% = ex0%: ys0% = ey0%: us0% = eu0%: vs0% = ev0%
+            xs1% = ex1%: ys1% = ey1%: us1% = eu1%: vs1% = ev1%
         ELSE
             edgeIndex% = 1
-            xs0% = e1.x: ys0% = y1%: us0% = e1.u: vs0% = e1.v
-            xs1% = e0.x: ys1% = y0%: us1% = e0.u: vs1% = e0.v
+            xs0% = ex1%: ys0% = ey1%: us0% = eu1%: vs0% = ev1%
+            xs1% = ex0%: ys1% = ey0%: us1% = eu0%: vs1% = ev0%
+        END IF
+
+        xs0% = xs0% * FPRAST%
+        xs1% = xs1% * FPRAST%
+        us0% = us0% * FPRAST%
+        us1% = us1% * FPRAST%
+        vs0% = vs0% * FPRAST%
+        vs1% = vs1% * FPRAST%
+
+        dy% = ys1% - ys0%
+        dx% = (xs1% - xs0%) \ dy%
+        du% = (us1% - us0%) \ dy%
+        dv% = (vs1% - vs0%) \ dy%
+
+        FOR y% = ys0% TO ys1% - 1
+            IF y% >= 0 AND y% < SCRHEIGHT% THEN
+                polyEdge(edgeIndex%, y%).x = xs0% \ FPRAST%
+                polyEdge(edgeIndex%, y%).u = us0% \ FPRAST%
+                polyEdge(edgeIndex%, y%).v = vs0% \ FPRAST%
+            END IF
+            xs0% = xs0% + dx%
+            us0% = us0% + du%
+            vs0% = vs0% + dv%
+        NEXT y%
+
+    END IF
+
+
+    IF ey1% <> ey2% THEN
+
+        IF (ey1% < ey2%) THEN
+            edgeIndex% = 0
+            xs0% = ex1%: ys0% = ey1%: us0% = eu1%: vs0% = ev1%
+            xs1% = ex2%: ys1% = ey2%: us1% = eu2%: vs1% = ev2%
+        ELSE
+            edgeIndex% = 1
+            xs0% = ex2%: ys0% = ey2%: us0% = eu2%: vs0% = ev2%
+            xs1% = ex1%: ys1% = ey1%: us1% = eu1%: vs1% = ev1%
+        END IF
+
+        xs0% = xs0% * FPRAST%
+        xs1% = xs1% * FPRAST%
+        us0% = us0% * FPRAST%
+        us1% = us1% * FPRAST%
+        vs0% = vs0% * FPRAST%
+        vs1% = vs1% * FPRAST%
+
+        dy% = ys1% - ys0%
+        dx% = (xs1% - xs0%) \ dy%
+        du% = (us1% - us0%) \ dy%
+        dv% = (vs1% - vs0%) \ dy%
+
+        FOR y% = ys0% TO ys1% - 1
+            IF y% >= 0 AND y% < SCRHEIGHT% THEN
+                polyEdge(edgeIndex%, y%).x = xs0% \ FPRAST%
+                polyEdge(edgeIndex%, y%).u = us0% \ FPRAST%
+                polyEdge(edgeIndex%, y%).v = vs0% \ FPRAST%
+            END IF
+            xs0% = xs0% + dx%
+            us0% = us0% + du%
+            vs0% = vs0% + dv%
+        NEXT y%
+
+    END IF
+
+
+    IF ey2% <> ey0% THEN
+
+        IF (ey2% < ey0%) THEN
+            edgeIndex% = 0
+            xs0% = ex2%: ys0% = ey2%: us0% = eu2%: vs0% = ev2%
+            xs1% = ex0%: ys1% = ey0%: us1% = eu0%: vs1% = ev0%
+        ELSE
+            edgeIndex% = 1
+            xs0% = ex0%: ys0% = ey0%: us0% = eu0%: vs0% = ev0%
+            xs1% = ex2%: ys1% = ey2%: us1% = eu2%: vs1% = ev2%
         END IF
 
         xs0% = xs0% * FPRAST%
@@ -1242,6 +1548,10 @@ END SUB
 
 SUB RenderObject3D (obj AS Object3D)
 
+    ' Set basic VideoSeg to our buffer in case I want to use LINE,PSET,CIRCLE,etc
+    screenSeg& = VARSEG(vram%(0)) + 1
+    SetVideoSeg (screenSeg&)
+
     SELECT CASE obj.renderType
 
         CASE renderTypeDots%
@@ -1252,7 +1562,13 @@ SUB RenderObject3D (obj AS Object3D)
 
         CASE renderTypePoly%
             SortObject3Dpoly obj
-            CalcObjectPolyLighting obj, light1
+
+            IF obj.polyStyle = polyStyleFlat% THEN
+                CalcObjectPolyLighting obj, light1
+            ELSEIF obj.polyStyle = polyStyleGouraud% THEN
+                CalcObjectVertexLighting obj, light1
+            END IF
+
             RenderObject3Dpoly obj
 
         CASE ELSE
@@ -1262,6 +1578,8 @@ SUB RenderObject3D (obj AS Object3D)
 END SUB
 
 SUB RenderObject3Ddots (obj AS Object3D)
+
+    screenSeg& = VARSEG(vram%(0)) + 1
 
     n% = obj.numVertices - 1
 
@@ -1274,7 +1592,10 @@ SUB RenderObject3Ddots (obj AS Object3D)
             y% = screenVertices(i%).y
 
             IF x% >= 0 AND x% < SCRWIDTH% AND y% >= 0 AND y% < SCRHEIGHT% THEN
-                PlotPixel x%, y%, 63
+
+                DEF SEG = screenSeg& + y% * 20
+                POKE x%, 63
+
             END IF
         END IF
 
@@ -1286,6 +1607,7 @@ SUB RenderObject3Dpoly (obj AS Object3D)
 
     indexOffset% = obj.polyIndicesOffset
     polyOffset% = obj.polysOffset
+    polyStyle% = obj.polyStyle
 
     FOR zSlot% = maxZbucket% TO minZbucket% STEP -1
         count% = zBucket%(zSlot%, 0)
@@ -1293,7 +1615,7 @@ SUB RenderObject3Dpoly (obj AS Object3D)
             i% = zBucket%(zSlot%, n%)
             polyIndex% = polyOffset% + (i% - indexOffset%) \ 3  ' I will think if it's worth it storing this too or recalculating. Probably not.
 
-            DrawPoly i%, polyIndex%
+            DrawPoly i%, polyIndex%, polyStyle%
         NEXT n%
     NEXT zSlot%
 
@@ -1302,7 +1624,7 @@ SUB RenderObject3Dpoly (obj AS Object3D)
         i% = zBucketLeftovers%(n%)
         polyIndex% = polyOffset% + (i% - indexOffset%) \ 3
 
-        DrawPoly i%, polyIndex%
+        DrawPoly i%, polyIndex%, polyStyle%
     NEXT n%
 
 END SUB
@@ -1329,14 +1651,10 @@ SUB RenderObject3Dwire (obj AS Object3D)
             y1% = screenVertices(i1%).y
 
             ' Obviously I am gonna write a line renderer soon
-            ' Now just testing the wireframe data with naive inbetweener
-            FOR t% = 0 TO pointsBetween%
-                x% = (x0% * t% + x1% * (pointsBetween% - t%)) \ pointsBetween%
-                y% = (y0% * t% + y1% * (pointsBetween% - t%)) \ pointsBetween%
-                IF x% >= 0 AND x% < SCRWIDTH% AND y% >= 0 AND y% < SCRHEIGHT% THEN
-                    PlotPixel x%, y%, 63
-                END IF
-            NEXT t%
+            ' Now just testing the wireframe data with LINE basic tricked to point to our buffer segment
+
+            LINE (x0%, y0%)-(x1%, y1%), 63
+
         END IF
 
     NEXT i%
@@ -1406,6 +1724,14 @@ SUB RunScene3D (t!)
 
     TransformObject3D object(currentObject%)
     RenderObject3D object(currentObject%)
+
+END SUB
+
+SUB ScaleIVec (vec AS IVector3D, scale!)
+
+    vec.x = INT(vec.x * scale!)
+    vec.y = INT(vec.y * scale!)
+    vec.z = INT(vec.z * scale!)
 
 END SUB
 
@@ -1490,6 +1816,14 @@ CONST palTest% = 0
 
 END SUB
 
+SUB SetIVec (vec AS IVector3D, x%, y%, z%)
+
+    vec.x = x%
+    vec.y = y%
+    vec.z = z%
+
+END SUB
+
 SUB SetObjectPosition (obj AS Object3D, px!, py!, pz!)
 
     obj.position.x = px!
@@ -1503,6 +1837,72 @@ SUB SetObjectRotation (obj AS Object3D, rx!, ry!, rz!)
     obj.rotation.x = rx!
     obj.rotation.y = ry!
     obj.rotation.z = rz!
+
+END SUB
+
+SUB SetVideoSeg (Segment&)
+
+  '=========================================================================
+  ' SetVideoSeg 1.2 by Plasma / Jon Petrosky  [04-22-2004]
+  '-------------------------------------------------------------------------
+  ' Changes QB's active video segment for SCREEN 13.
+  '-------------------------------------------------------------------------
+  ' Parameters: Segment = active video segment to use
+  '                       (&HA000 for the screen)
+  '
+  ' Returns:             0 = Error (could not find b$SegC)
+  '          anything else = Offset of b$SegC from the default segment
+  '                          (used by SuperPut)
+  '-------------------------------------------------------------------------
+  ' * Works for all graphics functions (does not work with PRINT)
+  ' * Compatible with SuperPut (any version)
+  ' * Compatible with:      QBASIC 1.x
+  '                     QuickBASIC 4.x (IDE & compiled)
+  '                         QB PDS 7.x (IDE & compiled)
+  '                          VBDOS 1.0 (IDE & compiled)
+  '
+  '   Note: If you compile your program, it must be compiled as a
+  '         stand-alone EXE!
+  '=========================================================================
+
+  STATIC VideoSegOff%
+  DEF SEG
+
+  ' If SetVideoSeg was previously called, we can just
+  ' set the new segment and bail.
+  IF VideoSegOff% <> 0 THEN
+    POKE VideoSegOff%, Segment& AND &HFF
+    POKE VideoSegOff% + 1, (Segment& AND &HFF00&) \ &H100
+    FoundVideoSeg% = VideoSegOff%
+    EXIT SUB
+  END IF
+
+
+  ' Otherwise we have to search for b$AddrC, which holds the
+  ' graphics offset (b$OffC) and segment (b$SegC). Since b$AddrC
+  ' is in the default segment, we can find it by setting it to a
+  ' certain value, and then searching for that value.
+
+  SCREEN 13             ' Set b$SegC to A000 (00A0 in memory)
+  PSET (160, 100), 0    ' Set b$OffC to 7DA0
+
+  ' Search for b$AddrC, which is in the default segment and
+  ' should have a value of A0 7D 00 A0.
+  FOR i% = 0 TO &H7FFC
+    IF PEEK(i%) = &HA0 AND PEEK(i% + 1) = &H7D THEN
+    IF PEEK(i% + 2) = &H0 AND PEEK(i% + 3) = &HA0 THEN
+      ' Found it, so set b$SegC to the specified segment and exit
+      VideoSegOff% = i% + 2
+      POKE VideoSegOff%, Segment& AND &HFF
+      POKE VideoSegOff% + 1, (Segment& AND &HFF00&) \ &H100
+      FoundVideoSeg% = VideoSegOff%
+      EXIT SUB
+    END IF
+    END IF
+  NEXT
+
+  ' Return an error (couldn't find b$SecC)
+  FoundVideoSeg% = 0
 
 END SUB
 
@@ -1620,7 +2020,8 @@ END SUB
 
 SUB WriteVram
 
-    PUT (0, 0), vram%, PSET
+    SetVideoSeg (&HA000)
+    PUT (0, 0), vram%(6), PSET
 
 END SUB
 
