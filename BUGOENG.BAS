@@ -1,3 +1,5 @@
+DECLARE SUB CalcObjectEnvmapTC (obj AS ANY)
+DECLARE SUB RotateObjectVertexNormals (obj AS ANY, mat!())
 TYPE Vertex3D
     x AS INTEGER
     y AS INTEGER
@@ -220,6 +222,10 @@ CONST ZBUCKETS% = ZBUCKETMAX% / ZBUCKETSIZE%
 CONST ZBUCKETPOLYS% = 64
 CONST LEFTOVERSSIZE% = 512
 
+' Some default values for now
+CONST ENVTEXWIDTH% = 128
+CONST ENVTEXHEIGHT% = 128
+
 
 ' ---- Zbucket arrays ----
 
@@ -244,6 +250,8 @@ vram%(7) = 200
 CONST DivFPRASTrange% = SCRWIDTH%
 
 DIM SHARED DivFPRAST%(0 TO (DivFPRASTrange% - 1) * FPRAST% - 1)
+
+DIM SHARED blobTex%(0 TO ENVTEXWIDTH% * ENVTEXHEIGHT% - 1)
 
 '$STATIC
 
@@ -459,6 +467,37 @@ SUB BlurVramY
     NEXT i%
 
     ClearBlurJunk
+
+END SUB
+
+SUB CalcObjectEnvmapTC (obj AS Object3D)
+
+    CONST HALFENVTEXWIDTH% = ENVTEXWIDTH% \ 2
+    CONST HALFENVTEXHEIGHT% = ENVTEXHEIGHT% \ 2
+
+    CONST ENVMULX% = ENVTEXWIDTH% \ 2
+    CONST ENVMULY% = ENVTEXHEIGHT% \ 2
+    CONST GHACK% = 0
+
+    n% = obj.numVertices - 1
+
+    FOR i% = 0 TO n%
+        vnZ% = transformedVertexNormals(i%).z
+        IF vnZ% > 0 THEN
+            vnX% = transformedVertexNormals(i%).x
+            vnY% = transformedVertexNormals(i%).y
+
+            u% = (HALFENVTEXWIDTH% + (vnX% * ENVMULX%) \ FPNORM%) AND (ENVTEXWIDTH% - 1)
+            v% = (HALFENVTEXHEIGHT% + (vnY% * ENVMULY%) \ FPNORM%) AND (ENVTEXHEIGHT% - 1)
+            IF u% < GHACK% THEN u% = GHACK%
+            IF u% > ENVTEXWIDTH% - 1 - GHACK% THEN u% = ENVTEXWIDTH% - 1 - GHACK%
+            IF v% < GHACK% THEN v% = GHACK%
+            IF v% > ENVTEXHEIGHT% - 1 - GHACK% THEN v% = ENVTEXHEIGHT% - 1 - GHACK%
+
+            screenVertices(i%).u = u%
+            screenVertices(i%).v = v%
+        END IF
+    NEXT i%
 
 END SUB
 
@@ -812,7 +851,7 @@ SUB DrawEdgesGouraud (col%)
 END SUB
 
 SUB DrawEdgesTextured
-
+'blobTex%(0 TO ENVTEXWIDTH% * ENVTEXHEIGHT% - 1)
     screenSeg& = VARSEG(vram%(0)) + 1
     ys% = edgeYmin% * (SCRWIDTH% \ 16)
 
@@ -837,7 +876,7 @@ SUB DrawEdgesTextured
             FOR x% = xs0% TO xs1%
                 u% = DivFPRAST%(u0%)
                 v% = DivFPRAST%(v0%)
-                POKE x%, u% XOR v%
+                POKE x%, blobTex%(((v% AND (ENVTEXHEIGHT% - 1)) * ENVTEXWIDTH%) + (u% AND (ENVTEXWIDTH% - 1)))
                 u0% = u0% + du%
                 v0% = v0% + dv%
             NEXT x%
@@ -1101,19 +1140,33 @@ SUB InitPrecalcs
         objectPolygons(i&).col = c%
     NEXT i&
 
-' Also randomize vertex gouraud coloring and coordinates for now
-
-    FOR i& = 0 TO maxObjVertices% - 1
-        screenVertices(i&).c = INT(RND * 255) AND 63
-        screenVertices(i&).u = (i& * 8) AND 63 'INT(RND * 255) AND 255
-        screenVertices(i&).v = (i& * 16) AND 127 'i& * INT(RND * 255) AND 255
-    NEXT i&
-
 ' LUT to divide by FPRAST% as qbasic doesn't convert integer division by power of two to shifts
 
     FOR i% = 0 TO (DivFPRASTrange% - 1) * FPRAST% - 1
         DivFPRAST%(i%) = i% \ FPRAST%
     NEXT i%
+
+' Texture for envmap
+
+    i% = 0
+    FOR y% = 0 TO ENVTEXHEIGHT% - 1
+        yc% = y% - ENVTEXHEIGHT% \ 2
+        FOR x% = 0 TO ENVTEXWIDTH% - 1
+            xc% = x% - ENVTEXWIDTH% \ 2
+            r& = SQR(xc% * xc% + yc% * yc%)
+            r& = r& * r&
+            c& = 63
+            IF r& > 0 THEN
+                c& = 16384 \ r&
+            END IF
+
+            IF c& < 0 THEN c& = 0
+            IF c& > 63 THEN c& = 63
+
+            blobTex%(i%) = 64 + c&
+            i% = i% + 1
+        NEXT x%
+    NEXT y%
 
 END SUB
 
@@ -1241,9 +1294,9 @@ SUB MulMatWithVector3D (srcVec AS Vector3D, dstVec AS Vector3D, mat!())
         y! = srcVec.y
         z! = srcVec.z
 
-        dstVec.x = x! * mat(0) + y! * mat(3) + z! * mat(6)
-        dstVec.y = x! * mat(1) + y! * mat(4) + z! * mat(7)
-        dstVec.z = x! * mat(2) + y! * mat(5) + z! * mat(8)
+        dstVec.x = x! * mat!(0) + y! * mat!(3) + z! * mat!(6)
+        dstVec.y = x! * mat!(1) + y! * mat!(4) + z! * mat!(7)
+        dstVec.z = x! * mat!(2) + y! * mat!(5) + z! * mat!(8)
 
 END SUB
 
@@ -1734,11 +1787,16 @@ SUB RenderObject3D (obj AS Object3D)
         CASE renderTypePoly%
             SortObject3Dpoly obj
 
-            IF obj.polyStyle = polyStyleFlat% THEN
-                CalcObjectPolyLighting obj, light1
-            ELSEIF obj.polyStyle = polyStyleGouraud% THEN
-                CalcObjectVertexLighting obj, light1
-            END IF
+            SELECT CASE obj.polyStyle
+                CASE polyStyleFlat%
+                    CalcObjectPolyLighting obj, light1
+                CASE polyStyleGouraud%
+                    CalcObjectVertexLighting obj, light1
+                CASE polyStyleTextured%
+                    RotateObjectVertexNormals obj, rotMat()
+                    CalcObjectEnvmapTC obj
+                CASE ELSE
+            END SELECT
 
             RenderObject3Dpoly obj
 
@@ -1840,6 +1898,27 @@ SUB ResetElementAddIndices
     currentPolyAdd% = 0
     currentPolyNormalAdd% = 0
     currentVertexNormalAdd% = 0
+
+END SUB
+
+SUB RotateObjectVertexNormals (obj AS Object3D, mat!())
+
+    vnOffset% = obj.vertexNormalsOffset
+    n% = obj.numVertices - 1
+
+    FOR i% = 0 TO n%
+
+        x! = objectVertexNormals(vnOffset%).x
+        y! = objectVertexNormals(vnOffset%).y
+        z! = objectVertexNormals(vnOffset%).z
+
+        transformedVertexNormals(i%).x = INT(x! * mat!(0) + y! * mat!(3) + z! * mat!(6))
+        transformedVertexNormals(i%).y = INT(x! * mat!(1) + y! * mat!(4) + z! * mat!(7))
+        transformedVertexNormals(i%).z = INT(x! * mat!(2) + y! * mat!(5) + z! * mat!(8))
+
+        vnOffset% = vnOffset% + 1
+
+    NEXT i%
 
 END SUB
 
@@ -1956,8 +2035,8 @@ CONST palTest% = 0
 
             FOR i% = 1 TO 63
                 OUT &H3C9, i% \ 1
-                OUT &H3C9, i% \ 3
-                OUT &H3C9, i% \ 4
+                OUT &H3C9, 16 + i% \ 2
+                OUT &H3C9, 32 + i% \ 4
             NEXT i%
 
             FOR i% = 64 TO 127
