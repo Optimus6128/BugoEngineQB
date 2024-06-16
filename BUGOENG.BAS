@@ -82,7 +82,7 @@ CONST TRUE% = 1
 CONST PI! = 3.14159265359#
 
 CONST BENCHSECS% = 1000 ' put something high to not exit or bench or say 15 secs to run alone and exit with fps
-
+CONST CONTROLS% = TRUE% ' If false, auto rotate object in RunScene3D, else let the user control position/rotation
 
 ' ---- Main Functions ----
 
@@ -96,7 +96,7 @@ DECLARE SUB ClearVram ()
 DECLARE SUB WriteVram ()
 DECLARE SUB WaitForVsync ()
 
-DECLARE SUB HandleInput ()
+DECLARE SUB HandleInput (dt!)
 
 ' ---- FX functions  ----
 
@@ -200,9 +200,10 @@ DECLARE SUB TransformObject3D (obj AS Object3D)
 ' ---- Scene management functions ----
 
 DECLARE SUB SetCurrentObject (objNum%, objFile$)
+DECLARE SUB SetLightPosition (x!, y!, z!, index%)
+
 DECLARE SUB InitScene3D ()
 DECLARE SUB RunScene3D (t!)
-
 
 
 ' ---- Engine Consts ----
@@ -252,9 +253,9 @@ DIM SHARED vram%(0 TO 32007)
 vram%(6) = 320 * 8
 vram%(7) = 200
 
-CONST DivFPRASTrange% = SCRWIDTH%
+CONST DivFPRASTrange% = SCRWIDTH% * FPRAST%
 
-DIM SHARED DivFPRAST%(0 TO (DivFPRASTrange% - 1) * FPRAST% - 1)
+DIM SHARED DivFPRAST%(0 TO DivFPRASTrange% - 1)
 
 DIM SHARED blobTex%(0 TO ENVTEXWIDTH% * ENVTEXHEIGHT% - 1)
 
@@ -269,6 +270,7 @@ CONST maxObjectsOnScreen% = 4
 CONST maxVertices% = maxObjectsOnScreen% * avgObjVertexNum%
 CONST maxPolys% = 2 * maxVertices%
 
+CONST numLights% = 3
 
 ' ---- Object arrays and engine shared variables ----
 
@@ -313,7 +315,7 @@ DIM SHARED ev0%, ev1%, ev2%
 DIM SHARED rotMat(0 TO 8) AS SINGLE
 DIM SHARED invRotMat(0 TO 8) AS SINGLE
 
-DIM SHARED light1 AS Vector3D
+DIM SHARED lights(0 TO numLights% - 1) AS Vector3D
 
 
 ' ---- Object Selector ----
@@ -365,6 +367,8 @@ DO WHILE quit% = FALSE% AND timeElapsed! < BENCHSECS%
 
     IF BLURSWITCH% = 0 THEN ClearVram
 
+    HandleInput timeElapsed!
+
     RunScene3D (2 * t!)
 
     IF BLURSWITCH% = 1 THEN
@@ -378,8 +382,6 @@ DO WHILE quit% = FALSE% AND timeElapsed! < BENCHSECS%
     'DisplayPalette
 
     'PRINT freeMem&
-
-    HandleInput
 
     t! = t! + .01
     nframe& = nframe& + 1
@@ -499,12 +501,12 @@ SUB CalcObjectEnvmapTC (obj AS Object3D)
 
         IF vnZ% < 0 THEN vnZ% = 0
 
-        u% = (HALFENVTEXWIDTH% + (vnX% * ENVMULX%) \ FPNORM%)' AND (ENVTEXWIDTH% - 1)
-        v% = (HALFENVTEXHEIGHT% + (vnY% * ENVMULY%) \ FPNORM%)' AND (ENVTEXHEIGHT% - 1)
+        u% = HALFENVTEXWIDTH% * FPRAST% + (vnX% * ENVMULX%) \ (FPRAST% \ FPNORM%)
+        v% = HALFENVTEXHEIGHT% * FPRAST% + (vnY% * ENVMULY%) \ (FPRAST% \ FPNORM%)
         IF u% < 0 THEN u% = 0
-        IF u% > ENVTEXWIDTH% - 1 THEN u% = ENVTEXWIDTH% - 1
+        IF u% > ENVTEXWIDTH% * FPRAST% - 1 THEN u% = ENVTEXWIDTH% * FPRAST% - 1
         IF v% < 0 THEN v% = 0
-        IF v% > ENVTEXHEIGHT% - 1 THEN v% = ENVTEXHEIGHT% - 1
+        IF v% > ENVTEXHEIGHT% * FPRAST% - 1 THEN v% = ENVTEXHEIGHT% * FPRAST% - 1
 
         screenVertices(i%).u = u%
         screenVertices(i%).v = v%
@@ -596,7 +598,7 @@ SUB CalcObjectVertexLighting (obj AS Object3D, light AS Vector3D)
         IF d% < 0 THEN d% = 0
         IF d% > FPNORM% THEN d% = FPNORM%
 
-        screenVertices(i%).c = (63 * d%) \ FPNORM%
+        screenVertices(i%).c = (63 * d%) * (FPRAST% \ FPNORM%)
     NEXT i%
 
 END SUB
@@ -790,12 +792,15 @@ SUB DrawEdgesFlat (col%)
     yEnd% = edgeYmax% - 1 ' one less edge bottom to avoid overdraw
     FOR y% = edgeYmin% TO yEnd%
         xs0% = polyEdge(0, y%).x
-        xs1% = polyEdge(1, y%).x - 1 ' one less pixel right to avoid overdraw
+        xs1% = polyEdge(1, y%).x
 
         IF xs0% < 0 THEN xs0% = 0
-        IF xs1% > SCRWIDTH% - 1 THEN xs1% = SCRWIDTH% - 1
+        IF xs1% > FPRAST% * (SCRWIDTH% - 1) THEN xs1% = FPRAST% * (SCRWIDTH% - 1)
 
-        IF xs1% >= xs0% THEN
+        IF xs1% > xs0% THEN
+
+            xs0% = DivFPRAST%(xs0%)
+            xs1% = DivFPRAST%(xs1%) - 1 ' one pixel less right to avoid overdraw
 
             'Idea with horizontal lines and SetVideoSeg to trick Qbasic to LINE on our buffer but below code is faster
             'LINE (xs0%, y%)-(xs1%, y%), col%
@@ -835,26 +840,41 @@ SUB DrawEdgesGouraud (col%)
     screenSeg& = VARSEG(vram%(0)) + 1
     ys% = edgeYmin% * (SCRWIDTH% \ 16)
 
+    col% = col% * FPRAST%
+
     yEnd% = edgeYmax% - 1 ' one less edge bottom to avoid overdraw
     FOR y% = edgeYmin% TO yEnd%
         xs0% = polyEdge(0, y%).x
-        xs1% = polyEdge(1, y%).x - 1 ' one less pixel right to avoid overdraw
-
-        c0% = (col% + polyEdge(0, y%).c) * FPRAST%
-        c1% = (col% + polyEdge(1, y%).c) * FPRAST%
-        IF xs1% > xs0% THEN dc% = (c1% - c0%) \ (xs1% - xs0%)
-
-        IF xs0% < 0 THEN xs0% = 0
-        IF xs1% > SCRWIDTH% - 1 THEN xs1% = SCRWIDTH% - 1
+        xs1% = polyEdge(1, y%).x
 
         IF xs1% >= xs0% THEN
-            DEF SEG = screenSeg& + ys%
+            IF xs0% >= 0 OR xs1% >= 0 THEN
+                c0% = col% + polyEdge(0, y%).c
+                c1% = col% + polyEdge(1, y%).c
 
-            FOR x% = xs0% TO xs1%
-                POKE x%, DivFPRAST%(c0%)
-                c0% = c0% + dc%
-            NEXT x%
+                dx% = DivFPRAST%(xs1% - xs0%)
+                IF dx% <> 0 THEN dc% = (c1% - c0%) \ dx%
 
+                IF xs0% < 0 THEN
+                    c0% = c0% + DivFPRAST%(-xs0%) * dc%
+                    xs0% = 0
+                END IF
+
+                IF xs1% > FPRAST% * (SCRWIDTH% - 1) THEN xs1% = FPRAST% * (SCRWIDTH% - 1)
+
+                IF xs1% >= xs0% THEN
+                    DEF SEG = screenSeg& + ys%
+
+                    xs0% = DivFPRAST%(xs0%)
+                    xs1% = DivFPRAST%(xs1%)
+
+                    FOR x% = xs0% TO xs1% - 1       ' one less pixel to avoid edge overdraw
+                        POKE x%, DivFPRAST%(c0%)
+                        c0% = c0% + dc%
+                    NEXT x%
+
+                END IF
+            END IF
         END IF
 
         ys% = ys% + (SCRWIDTH% \ 16)
@@ -870,29 +890,45 @@ SUB DrawEdgesTextured (col%)
     yEnd% = edgeYmax% - 1 ' one less edge bottom to avoid overdraw
     FOR y% = edgeYmin% TO yEnd%
         xs0% = polyEdge(0, y%).x
-        xs1% = polyEdge(1, y%).x - 1 ' one less pixel right to avoid overdraw
-
-        u0% = polyEdge(0, y%).u * FPRAST%: u1% = polyEdge(1, y%).u * FPRAST%
-        v0% = polyEdge(0, y%).v * FPRAST%: v1% = polyEdge(1, y%).v * FPRAST%
-        IF xs1% > xs0% THEN
-            du% = (u1% - u0%) \ (xs1% - xs0%)
-            dv% = (v1% - v0%) \ (xs1% - xs0%)
-        END IF
-
-        IF xs0% < 0 THEN xs0% = 0
-        IF xs1% > SCRWIDTH% - 1 THEN xs1% = SCRWIDTH% - 1
+        xs1% = polyEdge(1, y%).x
 
         IF xs1% >= xs0% THEN
-            DEF SEG = screenSeg& + ys%
+            IF xs0% >= 0 OR xs1% >= 0 THEN
+                u0% = polyEdge(0, y%).u
+                u1% = polyEdge(1, y%).u
+                v0% = polyEdge(0, y%).v
+                v1% = polyEdge(1, y%).v
 
-            FOR x% = xs0% TO xs1%
-                u% = DivFPRAST%(u0%)
-                v% = DivFPRAST%(v0%)
-                POKE x%, col% + blobTex%(((v% AND (ENVTEXHEIGHT% - 1)) * ENVTEXWIDTH%) + (u% AND (ENVTEXWIDTH% - 1)))
-                u0% = u0% + du%
-                v0% = v0% + dv%
-            NEXT x%
+                dx% = DivFPRAST%(xs1% - xs0%)
+                IF dx% <> 0 THEN
+                    du% = (u1% - u0%) \ dx%
+                    dv% = (v1% - v0%) \ dx%
+                END IF
 
+                IF xs0% < 0 THEN
+                    u0% = u0% + DivFPRAST%(-xs0%) * du%
+                    v0% = v0% + DivFPRAST%(-xs0%) * dv%
+                    xs0% = 0
+                END IF
+
+                IF xs1% > FPRAST% * (SCRWIDTH% - 1) THEN xs1% = FPRAST% * (SCRWIDTH% - 1)
+
+                IF xs1% >= xs0% THEN
+                    DEF SEG = screenSeg& + ys%
+
+                    xs0% = DivFPRAST%(xs0%)
+                    xs1% = DivFPRAST%(xs1%)
+
+                    FOR x% = xs0% TO xs1% - 1       ' one less pixel to avoid edge overdraw
+                        u% = DivFPRAST%(u0%)
+                        v% = DivFPRAST%(v0%)
+                        POKE x%, col% + blobTex%(((v% AND (ENVTEXHEIGHT% - 1)) * ENVTEXWIDTH%) + (u% AND (ENVTEXWIDTH% - 1)))
+                        u0% = u0% + du%
+                        v0% = v0% + dv%
+                    NEXT x%
+
+                END IF
+            END IF
         END IF
 
         ys% = ys% + (SCRWIDTH% \ 16)
@@ -947,9 +983,9 @@ SUB DrawPoly (i%, polyIndex%, polyStyle%)
     ex0% = screenVertices(i0%).x
     ex1% = screenVertices(i1%).x
     ex2% = screenVertices(i2%).x
-    ey0% = screenVertices(i0%).y
-    ey1% = screenVertices(i1%).y
-    ey2% = screenVertices(i2%).y
+    ey0% = screenVertices(i0%).y \ FPRAST%
+    ey1% = screenVertices(i1%).y \ FPRAST%
+    ey2% = screenVertices(i2%).y \ FPRAST%
 
     IF polyStyle% = polyStyleGouraud% THEN
         ec0% = screenVertices(i0%).c
@@ -1137,9 +1173,21 @@ SUB GenObject3Dtorus (params AS ObjGenParams, obj AS Object3D)
 
 END SUB
 
-SUB HandleInput
+SUB HandleInput (dt!)
+
+    CONST zBase! = 1024
+    CONST minAllowedZ! = 512
+    CONST maxAllowedZ! = 4096 - minAllowedZ!
+    CONST posMove! = 16
+    CONST zoomMove! = 64
+    CONST rotSpeed! = .00025
+
+    STATIC posX!, posY!, posZ!
+    STATIC rotX!, rotY!, rotZ!
+    STATIC rotVelX!, rotVelY!, rotVelZ!
 
     STATIC colBase%
+
 
     key$ = INKEY$
 
@@ -1152,22 +1200,22 @@ SUB HandleInput
 
     SELECT CASE key$
 
-        CASE "1"
+        CASE "q", "Q"
             object(currentObject%).renderType = renderTypeDots%
 
-        CASE "2"
+        CASE "w", "W"
             object(currentObject%).renderType = renderTypeWire%
 
-        CASE "3"
+        CASE "e", "E"
             object(currentObject%).renderType = renderTypePoly%
 
-        CASE "q", "Q"
+        CASE "a", "A"
             object(currentObject%).polyStyle = polyStyleFlat%
 
-        CASE "w", "W"
+        CASE "s", "S"
             object(currentObject%).polyStyle = polyStyleGouraud%
 
-        CASE "e", "E"
+        CASE "d", "D"
             object(currentObject%).polyStyle = polyStyleTextured%
 
         CASE "p", "P"
@@ -1176,14 +1224,78 @@ SUB HandleInput
         CASE ELSE
 
     END SELECT
-    
+
+    IF CONTROLS% = TRUE% THEN
+
+        SELECT CASE key$
+
+            CASE "4"
+                rotVelY! = rotVelY! - rotSpeed!
+
+            CASE "6"
+                rotVelY! = rotVelY! + rotSpeed!
+
+            CASE "8"
+                rotVelX! = rotVelX! - rotSpeed!
+
+            CASE "2"
+                rotVelX! = rotVelX! + rotSpeed!
+
+            CASE "7"
+                rotVelZ! = rotVelZ! - rotSpeed!
+
+            CASE "9"
+                rotVelZ! = rotVelZ! + rotSpeed!
+
+            CASE "+"
+                posZ! = posZ! - zoomMove!
+
+            CASE "-"
+                posZ! = posZ! + zoomMove!
+
+            CASE "j", "J"
+                posX! = posX! - posMove!
+
+            CASE "l", "L"
+                posX! = posX! + posMove!
+
+            CASE "i", "I"
+                posY! = posY! + posMove!
+
+            CASE "k", "K"
+                posY! = posY! - posMove!
+
+            CASE "5"
+                rotVelX! = 0: rotVelY! = 0: rotVelZ! = 0
+
+            CASE "0"
+                posX! = 0: posY! = 0: posZ! = 0
+                rotX! = 0: rotY! = 0: rotZ! = 0
+                rotVelX! = 0: rotVelY! = 0: rotVelZ! = 0
+
+            CASE ELSE
+
+        END SELECT
+
+        IF zBase! + posZ! < minAllowedZ! THEN posZ! = minAllowedZ! - zBase!
+        IF zBase! + posZ! > maxAllowedZ! THEN posZ! = maxAllowedZ! - zBase!
+
+        SetObjectPosition object(currentObject%), posX!, posY!, zBase! + posZ!
+        SetObjectRotation object(currentObject%), rotX!, rotY!, rotZ!
+
+        rotX! = rotX! + dt! * rotVelX!
+        rotY! = rotY! + dt! * rotVelY!
+        rotZ! = rotZ! + dt! * rotVelZ!
+
+    END IF
+
 END SUB
 
 SUB InitPrecalcs
 
 ' LUT to divide by FPRAST% as qbasic doesn't convert integer division by power of two to shifts
 
-    FOR i% = 0 TO (DivFPRASTrange% - 1) * FPRAST% - 1
+    FOR i% = 0 TO DivFPRASTrange% - 1
         DivFPRAST%(i%) = i% \ FPRAST%
     NEXT i%
 
@@ -1218,13 +1330,13 @@ SUB InitScene3D
     CONST defaultScaleRange! = 1024 - 128
 
     object(currentObject%).renderType = renderTypePoly%
-    object(currentObject%).polyStyle = polyStyleTextured%
+    object(currentObject%).polyStyle = polyStyleFlat%
     mustFlipPolygonOrientation% = FALSE%
 
     SELECT CASE currentObject%
 
         CASE objGenCube%
-            genParams.size = 32
+            genParams.size = 256
 
         CASE objGenDotCube%
             genParams.size = 16
@@ -1381,14 +1493,12 @@ SUB PrepareEdgeListsFlat
             xs1% = ex0%: ys1% = ey0%
         END IF
 
-        xs0% = xs0% * FPRAST%
-        xs1% = xs1% * FPRAST%
         dy% = ys1% - ys0%
         dx% = (xs1% - xs0%) \ dy%
 
         FOR y% = ys0% TO ys1% - 1
             IF y% >= 0 AND y% < SCRHEIGHT% THEN
-                polyEdge(edgeIndex%, y%).x = xs0% \ FPRAST%
+                polyEdge(edgeIndex%, y%).x = xs0%
             END IF
             xs0% = xs0% + dx%
         NEXT y%
@@ -1407,14 +1517,12 @@ SUB PrepareEdgeListsFlat
             xs1% = ex1%: ys1% = ey1%
         END IF
 
-        xs0% = xs0% * FPRAST%
-        xs1% = xs1% * FPRAST%
         dy% = ys1% - ys0%
         dx% = (xs1% - xs0%) \ dy%
 
         FOR y% = ys0% TO ys1% - 1
             IF y% >= 0 AND y% < SCRHEIGHT% THEN
-                polyEdge(edgeIndex%, y%).x = xs0% \ FPRAST%
+                polyEdge(edgeIndex%, y%).x = xs0%
             END IF
             xs0% = xs0% + dx%
         NEXT y%
@@ -1433,14 +1541,12 @@ SUB PrepareEdgeListsFlat
             xs1% = ex2%: ys1% = ey2%
         END IF
 
-        xs0% = xs0% * FPRAST%
-        xs1% = xs1% * FPRAST%
         dy% = ys1% - ys0%
         dx% = (xs1% - xs0%) \ dy%
 
         FOR y% = ys0% TO ys1% - 1
             IF y% >= 0 AND y% < SCRHEIGHT% THEN
-                polyEdge(edgeIndex%, y%).x = xs0% \ FPRAST%
+                polyEdge(edgeIndex%, y%).x = xs0%
             END IF
             xs0% = xs0% + dx%
         NEXT y%
@@ -1463,19 +1569,14 @@ SUB PrepareEdgeListsGouraud
             xs1% = ex0%: ys1% = ey0%: cs1% = ec0%
         END IF
 
-        xs0% = xs0% * FPRAST%
-        xs1% = xs1% * FPRAST%
-        cs0% = cs0% * FPRAST%
-        cs1% = cs1% * FPRAST%
-
         dy% = ys1% - ys0%
         dx% = (xs1% - xs0%) \ dy%
         dc% = (cs1% - cs0%) \ dy%
 
         FOR y% = ys0% TO ys1% - 1
             IF y% >= 0 AND y% < SCRHEIGHT% THEN
-                polyEdge(edgeIndex%, y%).x = DivFPRAST%(xs0%)
-                polyEdge(edgeIndex%, y%).c = DivFPRAST%(cs0%)
+                polyEdge(edgeIndex%, y%).x = xs0%
+                polyEdge(edgeIndex%, y%).c = cs0%
             END IF
             xs0% = xs0% + dx%
             cs0% = cs0% + dc%
@@ -1496,19 +1597,14 @@ SUB PrepareEdgeListsGouraud
             xs1% = ex1%: ys1% = ey1%: cs1% = ec1%
         END IF
 
-        xs0% = xs0% * FPRAST%
-        xs1% = xs1% * FPRAST%
-        cs0% = cs0% * FPRAST%
-        cs1% = cs1% * FPRAST%
-
         dy% = ys1% - ys0%
         dx% = (xs1% - xs0%) \ dy%
         dc% = (cs1% - cs0%) \ dy%
 
         FOR y% = ys0% TO ys1% - 1
             IF y% >= 0 AND y% < SCRHEIGHT% THEN
-                polyEdge(edgeIndex%, y%).x = DivFPRAST%(xs0%)
-                polyEdge(edgeIndex%, y%).c = DivFPRAST%(cs0%)
+                polyEdge(edgeIndex%, y%).x = xs0%
+                polyEdge(edgeIndex%, y%).c = cs0%
             END IF
             xs0% = xs0% + dx%
             cs0% = cs0% + dc%
@@ -1529,19 +1625,14 @@ SUB PrepareEdgeListsGouraud
             xs1% = ex2%: ys1% = ey2%: cs1% = ec2%
         END IF
 
-        xs0% = xs0% * FPRAST%
-        xs1% = xs1% * FPRAST%
-        cs0% = cs0% * FPRAST%
-        cs1% = cs1% * FPRAST%
-
         dy% = ys1% - ys0%
         dx% = (xs1% - xs0%) \ dy%
         dc% = (cs1% - cs0%) \ dy%
 
         FOR y% = ys0% TO ys1% - 1
             IF y% >= 0 AND y% < SCRHEIGHT% THEN
-                polyEdge(edgeIndex%, y%).x = DivFPRAST%(xs0%)
-                polyEdge(edgeIndex%, y%).c = DivFPRAST%(cs0%)
+                polyEdge(edgeIndex%, y%).x = xs0%
+                polyEdge(edgeIndex%, y%).c = cs0%
             END IF
             xs0% = xs0% + dx%
             cs0% = cs0% + dc%
@@ -1565,13 +1656,6 @@ SUB PrepareEdgeListsTextured
             xs1% = ex0%: ys1% = ey0%: us1% = eu0%: vs1% = ev0%
         END IF
 
-        xs0% = xs0% * FPRAST%
-        xs1% = xs1% * FPRAST%
-        us0% = us0% * FPRAST%
-        us1% = us1% * FPRAST%
-        vs0% = vs0% * FPRAST%
-        vs1% = vs1% * FPRAST%
-
         dy% = ys1% - ys0%
         dx% = (xs1% - xs0%) \ dy%
         du% = (us1% - us0%) \ dy%
@@ -1579,9 +1663,9 @@ SUB PrepareEdgeListsTextured
 
         FOR y% = ys0% TO ys1% - 1
             IF y% >= 0 AND y% < SCRHEIGHT% THEN
-                polyEdge(edgeIndex%, y%).x = DivFPRAST%(xs0%)
-                polyEdge(edgeIndex%, y%).u = DivFPRAST%(us0%)
-                polyEdge(edgeIndex%, y%).v = DivFPRAST%(vs0%)
+                polyEdge(edgeIndex%, y%).x = xs0%
+                polyEdge(edgeIndex%, y%).u = us0%
+                polyEdge(edgeIndex%, y%).v = vs0%
             END IF
             xs0% = xs0% + dx%
             us0% = us0% + du%
@@ -1603,13 +1687,6 @@ SUB PrepareEdgeListsTextured
             xs1% = ex1%: ys1% = ey1%: us1% = eu1%: vs1% = ev1%
         END IF
 
-        xs0% = xs0% * FPRAST%
-        xs1% = xs1% * FPRAST%
-        us0% = us0% * FPRAST%
-        us1% = us1% * FPRAST%
-        vs0% = vs0% * FPRAST%
-        vs1% = vs1% * FPRAST%
-
         dy% = ys1% - ys0%
         dx% = (xs1% - xs0%) \ dy%
         du% = (us1% - us0%) \ dy%
@@ -1617,9 +1694,9 @@ SUB PrepareEdgeListsTextured
 
         FOR y% = ys0% TO ys1% - 1
             IF y% >= 0 AND y% < SCRHEIGHT% THEN
-                polyEdge(edgeIndex%, y%).x = DivFPRAST%(xs0%)
-                polyEdge(edgeIndex%, y%).u = DivFPRAST%(us0%)
-                polyEdge(edgeIndex%, y%).v = DivFPRAST%(vs0%)
+                polyEdge(edgeIndex%, y%).x = xs0%
+                polyEdge(edgeIndex%, y%).u = us0%
+                polyEdge(edgeIndex%, y%).v = vs0%
             END IF
             xs0% = xs0% + dx%
             us0% = us0% + du%
@@ -1641,13 +1718,6 @@ SUB PrepareEdgeListsTextured
             xs1% = ex2%: ys1% = ey2%: us1% = eu2%: vs1% = ev2%
         END IF
 
-        xs0% = xs0% * FPRAST%
-        xs1% = xs1% * FPRAST%
-        us0% = us0% * FPRAST%
-        us1% = us1% * FPRAST%
-        vs0% = vs0% * FPRAST%
-        vs1% = vs1% * FPRAST%
-
         dy% = ys1% - ys0%
         dx% = (xs1% - xs0%) \ dy%
         du% = (us1% - us0%) \ dy%
@@ -1655,9 +1725,9 @@ SUB PrepareEdgeListsTextured
 
         FOR y% = ys0% TO ys1% - 1
             IF y% >= 0 AND y% < SCRHEIGHT% THEN
-                polyEdge(edgeIndex%, y%).x = DivFPRAST%(xs0%)
-                polyEdge(edgeIndex%, y%).u = DivFPRAST%(us0%)
-                polyEdge(edgeIndex%, y%).v = DivFPRAST%(vs0%)
+                polyEdge(edgeIndex%, y%).x = xs0%
+                polyEdge(edgeIndex%, y%).u = us0%
+                polyEdge(edgeIndex%, y%).v = vs0%
             END IF
             xs0% = xs0% + dx%
             us0% = us0% + du%
@@ -1830,9 +1900,9 @@ SUB RenderObject3D (obj AS Object3D)
 
             SELECT CASE obj.polyStyle
                 CASE polyStyleFlat%
-                    CalcObjectPolyLighting obj, light1
+                    CalcObjectPolyLighting obj, lights(0)
                 CASE polyStyleGouraud%
-                    CalcObjectVertexLighting obj, light1
+                    CalcObjectVertexLighting obj, lights(0)
                 CASE polyStyleTextured%
                     RotateObjectVertexNormals obj, rotMat()
                     CalcObjectEnvmapTC obj
@@ -1861,10 +1931,10 @@ SUB RenderObject3Ddots (obj AS Object3D)
             x% = screenVertices(i%).x
             y% = screenVertices(i%).y
 
-            IF x% >= 0 AND x% < SCRWIDTH% AND y% >= 0 AND y% < SCRHEIGHT% THEN
+            IF x% >= 0 AND x% < SCRWIDTH% * FPRAST% AND y% >= 0 AND y% < SCRHEIGHT% * FPRAST% THEN
 
-                DEF SEG = screenSeg& + y% * 20
-                POKE x%, 63
+                DEF SEG = screenSeg& + DivFPRAST%(y%) * 20
+                POKE DivFPRAST%(x%), 63
 
             END IF
         END IF
@@ -1965,53 +2035,51 @@ END SUB
 
 SUB RunScene3D (t!)
 
-    xt! = 0 'SIN(t!) * 48
-    yt! = 0 'SIN(1.5 * t!) * 32
-    zt! = 256 '+ SIN(1.25 * t!) * 96
+    IF CONTROLS% <> TRUE% THEN
+        xt! = 0 'SIN(t!) * 48
+        yt! = 0 'SIN(1.5 * t!) * 32
+        zt! = 256 '+ SIN(1.25 * t!) * 96
 
-    rx! = .7 * t!
-    ry! = t!
-    rz! = 1.25 * t!
+        rx! = .7 * t!
+        ry! = t!
+        rz! = 1.25 * t!
 
-    light1.x = 0
-    light1.y = 0
-    light1.z = 1
+        SELECT CASE currentObject%
 
-    SELECT CASE currentObject%
+            CASE objGenCube%
+                zt! = 1024
 
-        CASE objGenCube%
-            zt! = 128
-            'xt! = SIN(.5 * t!) * 64
-            'yt! = SIN(.75 * t!) * 64
+            CASE objGenDotCube%
+                zt! = 256
 
-        CASE objGenDotCube%
-            zt! = 256
+            CASE objGenSphere%
 
-        CASE objGenSphere%
+            CASE objGenTorus%
 
-        CASE objGenTorus%
+            CASE objLoadTest%
+                zt! = 1024
 
-        CASE objLoadTest%
-            zt! = 1024
+            CASE objLoadTeapot%
+                yt! = 0
+                zt! = 1024
+                rx! = PI!
+                ry! = 4 * t!
 
-        CASE objLoadTeapot%
-            yt! = 0
-            zt! = 1024
-            rx! = PI!
-            ry! = 4 * t!
+            CASE objLoadMask%
+                zt! = 160 + SIN(4 * t!) * 48
+                rx! = -PI! / 2 + SIN(6 * t!) * .75
+                ry! = PI!
+                rz! = SIN(8 * t!) * .75
 
-        CASE objLoadMask%
-            zt! = 160 + SIN(4 * t!) * 48
-            rx! = -PI! / 2 + SIN(6 * t!) * .75
-            ry! = PI!
-            rz! = SIN(8 * t!) * .75
+            CASE ELSE
 
-        CASE ELSE
+        END SELECT
 
-    END SELECT
+        SetObjectPosition object(currentObject%), xt!, yt!, zt!
+        SetObjectRotation object(currentObject%), rx!, ry!, rz!
+    END IF
 
-    SetObjectPosition object(currentObject%), xt!, yt!, zt!
-    SetObjectRotation object(currentObject%), rx!, ry!, rz!
+    SetLightPosition 0, 0, 1, 0
 
     TransformObject3D object(currentObject%)
     RenderObject3D object(currentObject%)
@@ -2112,6 +2180,14 @@ SUB SetIVec (vec AS IVector3D, x%, y%, z%)
     vec.x = x%
     vec.y = y%
     vec.z = z%
+
+END SUB
+
+SUB SetLightPosition (x!, y!, z!, index%)
+
+    lights(index%).x = x!
+    lights(index%).y = y!
+    lights(index%).z = z!
 
 END SUB
 
@@ -2269,7 +2345,7 @@ END SUB
 
 SUB TransformObject3D (obj AS Object3D)
 
-    CONST proj! = 256
+    CONST PROJ! = 256 * FPRAST%
 
     posX! = obj.position.x
     posY! = obj.position.y
@@ -2295,8 +2371,8 @@ SUB TransformObject3D (obj AS Object3D)
             x! = xo! * rotMat(0) + yo! * rotMat(3) + zo! * rotMat(6)
             y! = xo! * rotMat(1) + yo! * rotMat(4) + zo! * rotMat(7)
 
-            screenVertices(i%).x = SCRWIDTH2% + INT((x! + posX!) * proj!) \ zi%
-            screenVertices(i%).y = SCRHEIGHT2% - INT((y! + posY!) * proj!) \ zi%
+            screenVertices(i%).x = SCRWIDTH2% * FPRAST% + INT((x! + posX!) * PROJ!) \ zi%
+            screenVertices(i%).y = SCRHEIGHT2% * FPRAST% - INT((y! + posY!) * PROJ!) \ zi%
         END IF
 
     NEXT i%
