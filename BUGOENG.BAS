@@ -1,5 +1,3 @@
-DECLARE SUB CalcObjectEnvmapTC (obj AS ANY)
-DECLARE SUB RotateObjectVertexNormals (obj AS ANY, mat!())
 TYPE Vertex3D
     x AS INTEGER
     y AS INTEGER
@@ -83,6 +81,8 @@ CONST TRUE% = 1
 
 CONST PI! = 3.14159265359#
 
+CONST BENCHSECS% = 1000 ' put something high to not exit or bench or say 15 secs to run alone and exit with fps
+
 
 ' ---- Main Functions ----
 
@@ -96,6 +96,7 @@ DECLARE SUB ClearVram ()
 DECLARE SUB WriteVram ()
 DECLARE SUB WaitForVsync ()
 
+DECLARE SUB HandleInput ()
 
 ' ---- FX functions  ----
 
@@ -146,6 +147,7 @@ DECLARE SUB ScaleObjectVertices (obj AS Object3D, scale!)
 DECLARE SUB CenterObjectVertices (obj AS Object3D)
 DECLARE SUB FlipPolygonOrientation (obj AS Object3D)
 
+DECLARE SUB ChangeBaseOjectPolygonsColor (obj AS ANY, col%)
 
 ' ---- Object loading functions ----
 
@@ -178,9 +180,12 @@ DECLARE SUB DrawEdgesTexturedHP ()
 DECLARE SUB CalcObjectPolyLighting (obj AS Object3D, light AS Vector3D)
 DECLARE SUB CalcObjectVertexLighting (obj AS Object3D, light AS Vector3D)
 
+DECLARE SUB RotateObjectVertexNormals (obj AS ANY, mat!())
+DECLARE SUB CalcObjectEnvmapTC (obj AS ANY)
+
 DECLARE SUB DrawEdgesFlat (col%)
 DECLARE SUB DrawEdgesGouraud (col%)
-DECLARE SUB DrawEdgesTextured ()
+DECLARE SUB DrawEdgesTextured (col%)
 
 
 
@@ -306,6 +311,7 @@ DIM SHARED eu0%, eu1%, eu2%
 DIM SHARED ev0%, ev1%, ev2%
 
 DIM SHARED rotMat(0 TO 8) AS SINGLE
+DIM SHARED invRotMat(0 TO 8) AS SINGLE
 
 DIM SHARED light1 AS Vector3D
 
@@ -326,6 +332,9 @@ ELSE
     SetCurrentObject objLoadTest%, objFile$
 END IF
 
+
+DIM SHARED quit%
+quit% = FALSE%
 
 ' ---- Init ----
 
@@ -349,10 +358,10 @@ nframe& = 0
 
 
 timeElapsed! = 0
-
 t! = 0
+
 timeStart! = TIMER
-DO WHILE INKEY$ = "" AND timeElapsed! < 15
+DO WHILE quit% = FALSE% AND timeElapsed! < BENCHSECS%
 
     IF BLURSWITCH% = 0 THEN ClearVram
 
@@ -369,6 +378,8 @@ DO WHILE INKEY$ = "" AND timeElapsed! < 15
     'DisplayPalette
 
     'PRINT freeMem&
+
+    HandleInput
 
     t! = t! + .01
     nframe& = nframe& + 1
@@ -477,26 +488,27 @@ SUB CalcObjectEnvmapTC (obj AS Object3D)
 
     CONST ENVMULX% = ENVTEXWIDTH% \ 2
     CONST ENVMULY% = ENVTEXHEIGHT% \ 2
-    CONST GHACK% = 0
 
     n% = obj.numVertices - 1
 
     FOR i% = 0 TO n%
+
+        vnX% = transformedVertexNormals(i%).x
+        vnY% = transformedVertexNormals(i%).y
         vnZ% = transformedVertexNormals(i%).z
-        IF vnZ% > 0 THEN
-            vnX% = transformedVertexNormals(i%).x
-            vnY% = transformedVertexNormals(i%).y
 
-            u% = (HALFENVTEXWIDTH% + (vnX% * ENVMULX%) \ FPNORM%) AND (ENVTEXWIDTH% - 1)
-            v% = (HALFENVTEXHEIGHT% + (vnY% * ENVMULY%) \ FPNORM%) AND (ENVTEXHEIGHT% - 1)
-            IF u% < GHACK% THEN u% = GHACK%
-            IF u% > ENVTEXWIDTH% - 1 - GHACK% THEN u% = ENVTEXWIDTH% - 1 - GHACK%
-            IF v% < GHACK% THEN v% = GHACK%
-            IF v% > ENVTEXHEIGHT% - 1 - GHACK% THEN v% = ENVTEXHEIGHT% - 1 - GHACK%
+        IF vnZ% < 0 THEN vnZ% = 0
 
-            screenVertices(i%).u = u%
-            screenVertices(i%).v = v%
-        END IF
+        u% = (HALFENVTEXWIDTH% + (vnX% * ENVMULX%) \ FPNORM%)' AND (ENVTEXWIDTH% - 1)
+        v% = (HALFENVTEXHEIGHT% + (vnY% * ENVMULY%) \ FPNORM%)' AND (ENVTEXHEIGHT% - 1)
+        IF u% < 0 THEN u% = 0
+        IF u% > ENVTEXWIDTH% - 1 THEN u% = ENVTEXWIDTH% - 1
+        IF v% < 0 THEN v% = 0
+        IF v% > ENVTEXHEIGHT% - 1 THEN v% = ENVTEXHEIGHT% - 1
+
+        screenVertices(i%).u = u%
+        screenVertices(i%).v = v%
+
     NEXT i%
 
 END SUB
@@ -505,12 +517,8 @@ SUB CalcObjectPolyLighting (obj AS Object3D, light AS Vector3D)
 
     DIM rotLight AS Vector3D
     DIM iLight AS IVector3D
-    DIM invRotMat!(8)
 
-    InvertMatrix rotMat!(), invRotMat!()
-
-    MulMatWithVector3D light, rotLight, invRotMat!()
-
+    MulMatWithVector3D light, rotLight, invRotMat()
     SetIVec iLight, INT(rotLight.x * FPNORM%), INT(rotLight.y * FPNORM%), INT(rotLight.z * FPNORM%)
 
     offset% = obj.polyNormalsOffset
@@ -575,12 +583,8 @@ SUB CalcObjectVertexLighting (obj AS Object3D, light AS Vector3D)
 
     DIM rotLight AS Vector3D
     DIM iLight AS IVector3D
-    DIM invRotMat!(8)
 
-    InvertMatrix rotMat!(), invRotMat!()
-
-    MulMatWithVector3D light, rotLight, invRotMat!()
-
+    MulMatWithVector3D light, rotLight, invRotMat()
     SetIVec iLight, INT(rotLight.x * FPNORM%), INT(rotLight.y * FPNORM%), INT(rotLight.z * FPNORM%)
 
     offset% = obj.vertexNormalsOffset
@@ -704,6 +708,14 @@ SUB CenterObjectVertices (obj AS Object3D)
         objectVertices(k%).x = objectVertices(k%).x - centerX!
         objectVertices(k%).y = objectVertices(k%).y - centerY!
         objectVertices(k%).z = objectVertices(k%).z - centerZ!
+    NEXT i%
+
+END SUB
+
+SUB ChangeBaseOjectPolygonsColor (obj AS Object3D, col%)
+
+    FOR i% = 0 TO obj.numPolys - 1
+        objectPolygons(i%).col = col%
     NEXT i%
 
 END SUB
@@ -850,8 +862,8 @@ SUB DrawEdgesGouraud (col%)
 
 END SUB
 
-SUB DrawEdgesTextured
-'blobTex%(0 TO ENVTEXWIDTH% * ENVTEXHEIGHT% - 1)
+SUB DrawEdgesTextured (col%)
+
     screenSeg& = VARSEG(vram%(0)) + 1
     ys% = edgeYmin% * (SCRWIDTH% \ 16)
 
@@ -876,7 +888,7 @@ SUB DrawEdgesTextured
             FOR x% = xs0% TO xs1%
                 u% = DivFPRAST%(u0%)
                 v% = DivFPRAST%(v0%)
-                POKE x%, blobTex%(((v% AND (ENVTEXHEIGHT% - 1)) * ENVTEXWIDTH%) + (u% AND (ENVTEXWIDTH% - 1)))
+                POKE x%, col% + blobTex%(((v% AND (ENVTEXHEIGHT% - 1)) * ENVTEXWIDTH%) + (u% AND (ENVTEXWIDTH% - 1)))
                 u0% = u0% + du%
                 v0% = v0% + dv%
             NEXT x%
@@ -966,21 +978,21 @@ SUB DrawPoly (i%, polyIndex%, polyStyle%)
 
     IF edgeYmax% > edgeYmin% THEN
 
+        col% = objectPolygons(polyIndex%).col
+
         SELECT CASE polyStyle%
 
             CASE polyStyleFlat%
                 PrepareEdgeListsFlat
-                col% = objectPolygons(polyIndex%).col + objectPolygons(polyIndex%).shade
-                DrawEdgesFlat col%
+                DrawEdgesFlat col% + objectPolygons(polyIndex%).shade
 
             CASE polyStyleGouraud%
                 PrepareEdgeListsGouraud
-                col% = objectPolygons(polyIndex%).col
                 DrawEdgesGouraud col%
 
             CASE polyStyleTextured%
                 PrepareEdgeListsTextured
-                DrawEdgesTextured
+                DrawEdgesTextured col%
 
             CASE ELSE
         END SELECT
@@ -1125,20 +1137,49 @@ SUB GenObject3Dtorus (params AS ObjGenParams, obj AS Object3D)
 
 END SUB
 
+SUB HandleInput
+
+    STATIC colBase%
+
+    key$ = INKEY$
+
+    IF key$ <> "" THEN
+        IF ASC(key$) = 27 THEN
+            quit% = TRUE%
+            EXIT SUB
+        END IF
+    END IF
+
+    SELECT CASE key$
+
+        CASE "1"
+            object(currentObject%).renderType = renderTypeDots%
+
+        CASE "2"
+            object(currentObject%).renderType = renderTypeWire%
+
+        CASE "3"
+            object(currentObject%).renderType = renderTypePoly%
+
+        CASE "q", "Q"
+            object(currentObject%).polyStyle = polyStyleFlat%
+
+        CASE "w", "W"
+            object(currentObject%).polyStyle = polyStyleGouraud%
+
+        CASE "e", "E"
+            object(currentObject%).polyStyle = polyStyleTextured%
+
+        CASE "p", "P"
+            colBase% = (colBase% + 64) AND 255
+            ChangeBaseOjectPolygonsColor object(currentObject%), colBase%
+        CASE ELSE
+
+    END SELECT
+    
+END SUB
+
 SUB InitPrecalcs
-
-' Just randomize polygon colors for now
-
-    FOR i& = 0 TO maxPolys% - 1
-        'c% = (32 + ((16 * i&) AND 63)) AND 255
-
-        'c% = (i& AND 1) * 64
-        c% = 192
-
-        IF BLURSWITCH% = 1 THEN c% = c% AND 63
-
-        objectPolygons(i&).col = c%
-    NEXT i&
 
 ' LUT to divide by FPRAST% as qbasic doesn't convert integer division by power of two to shifts
 
@@ -1163,7 +1204,7 @@ SUB InitPrecalcs
             IF c& < 0 THEN c& = 0
             IF c& > 63 THEN c& = 63
 
-            blobTex%(i%) = 64 + c&
+            blobTex%(i%) = c&
             i% = i% + 1
         NEXT x%
     NEXT y%
@@ -2235,6 +2276,7 @@ SUB TransformObject3D (obj AS Object3D)
     posZ! = obj.position.z
 
     CalcRotMatrix obj.rotation
+    InvertMatrix rotMat(), invRotMat()
 
     offset% = obj.verticesOffset
     n% = obj.numVertices - 1
