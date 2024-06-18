@@ -86,6 +86,8 @@ CONST CONTROLS% = TRUE% ' If false, auto rotate object in RunScene3D, else let t
 
 ' ---- Main Functions ----
 
+DECLARE SUB FFIX (Mode%)
+
 DECLARE SUB InitPrecalcs ()
 
 DECLARE SUB SetDefaultPalette ()
@@ -147,11 +149,13 @@ DECLARE SUB ScaleObjectVertices (obj AS Object3D, scale!)
 DECLARE SUB CenterObjectVertices (obj AS Object3D)
 DECLARE SUB FlipPolygonOrientation (obj AS Object3D)
 
-DECLARE SUB ChangeBaseOjectPolygonsColor (obj AS ANY, col%)
+DECLARE SUB ChangeBaseOjectPolygonsColor (obj AS Object3D, col%)
 
 ' ---- Object loading functions ----
 
 DECLARE SUB LoadObject3D (objFile$, obj AS Object3D)
+DECLARE SUB LoadObject3Dplg (objFile$, obj AS Object3D)
+DECLARE SUB LoadObject3D3do (objFile$, obj AS Object3D)
 
 DECLARE SUB ReadLineStringFromPlg (fileHandle%, bufDst$)
 DECLARE SUB ReadLineValues (inp$, out$(), numVals%)
@@ -180,8 +184,8 @@ DECLARE SUB DrawEdgesTexturedHP ()
 DECLARE SUB CalcObjectPolyLighting (obj AS Object3D, light AS Vector3D)
 DECLARE SUB CalcObjectVertexLighting (obj AS Object3D, light AS Vector3D)
 
-DECLARE SUB RotateObjectVertexNormals (obj AS ANY, mat!())
-DECLARE SUB CalcObjectEnvmapTC (obj AS ANY)
+DECLARE SUB RotateObjectVertexNormals (obj AS Object3D, mat!())
+DECLARE SUB CalcObjectEnvmapTC (obj AS Object3D)
 
 DECLARE SUB DrawEdgesFlat (col%)
 DECLARE SUB DrawEdgesGouraud (col%)
@@ -283,7 +287,7 @@ CONST objLoadTeapot% = 5
 CONST objLoadMask% = 6
 CONST numObjects% = 7
 
-DIM SHARED object(0 TO numObjects% - 1) AS Object3D
+DIM SHARED Object(0 TO numObjects% - 1) AS Object3D
 
 DIM SHARED screenVertices(0 TO maxObjVertices% - 1) AS Element3D
 DIM SHARED transformedVertexNormals(0 TO maxObjVertices% - 1) AS IVector3D
@@ -325,6 +329,7 @@ DIM SHARED objectLoadFile$
 
 CLS
 FILES "*.plg"
+FILES "*.3do"
 PRINT
 INPUT "Load: ", objFile$
 
@@ -339,6 +344,9 @@ DIM SHARED quit%
 quit% = FALSE%
 
 ' ---- Init ----
+
+' Load FFIX to memory
+FFIX 0
 
 InitPrecalcs
 
@@ -392,6 +400,9 @@ timeEnd! = TIMER
 
 PRINT nframe& / (timeEnd! - timeStart!)
 SLEEP
+
+' Unload FFIX from memory
+FFIX 1
 
 SUB AddIVec (vSrc1 AS IVector3D, vSrc2 AS IVector3D, vDst AS IVector3D)
 
@@ -1036,6 +1047,42 @@ SUB DrawPoly (i%, polyIndex%, polyStyle%)
 
 END SUB
 
+SUB FFIX (Mode%)
+
+STATIC OldISR1%, OldISR2%, OldISR3%, OldISR4%
+
+IF Mode% = 0 THEN
+
+    DIM isr(0 TO 5) AS LONG                     'FFix by Dav,Plasma and v1ctor
+    isr(0) = &H53EC8B55: isr(1) = &H83025E8B
+    isr(2) = &H8E0602EB: isr(3) = &HC7260446
+    isr(4) = &H79B9007: isr(5) = &HCF9B5D5B
+    DEF SEG = 0
+    OldISR1% = PEEK(&HF4)
+    OldISR2% = PEEK(&HF5)
+    OldISR3% = PEEK(&HF6)
+    OldISR4% = PEEK(&HF7)
+    POKE &HF4, VARPTR(isr(0)) AND 255
+    POKE &HF5, (CLNG(VARPTR(isr(0))) AND &HFF00&) \ 256
+    POKE &HF6, VARSEG(isr(0)) AND 255
+    POKE &HF7, (CLNG(VARSEG(isr(0))) AND &HFF00&) \ 256
+
+ELSE
+
+    IF OldISR1% <> 0 AND OldISR2% <> 0 AND OldISR3% <> 0 AND OldISR4% <> 0 THEN
+
+        DEF SEG = 0
+        POKE &HF4, OldISR1%
+        POKE &HF5, OldISR2%
+        POKE &HF6, OldISR3%
+        POKE &HF7, OldISR4%
+   
+    END IF
+
+END IF
+
+END SUB
+
 SUB FindObjectScaleToFit (obj AS Object3D, desiredRange!, scale!)
 
     DIM range AS Range3D
@@ -1057,10 +1104,9 @@ SUB FlipPolygonOrientation (obj AS Object3D)
     n% = offset% + obj.numPolyIndices - 1
 
     FOR i% = offset% TO n% STEP 3
-        FOR j% = 0 TO 2 STEP 2
-            k% = objectPolyIndices%(i% + j%)
-            objectPolyIndices%(i% + 2 - j%) = k%
-        NEXT j%
+        k% = objectPolyIndices%(i%)
+        objectPolyIndices%(i%) = objectPolyIndices%(i% + 2)
+        objectPolyIndices%(i% + 2) = k%
     NEXT i%
 
 END SUB
@@ -1201,26 +1247,26 @@ SUB HandleInput (dt!)
     SELECT CASE key$
 
         CASE "q", "Q"
-            object(currentObject%).renderType = renderTypeDots%
+            Object(currentObject%).renderType = renderTypeDots%
 
         CASE "w", "W"
-            object(currentObject%).renderType = renderTypeWire%
+            Object(currentObject%).renderType = renderTypeWire%
 
         CASE "e", "E"
-            object(currentObject%).renderType = renderTypePoly%
+            Object(currentObject%).renderType = renderTypePoly%
 
         CASE "a", "A"
-            object(currentObject%).polyStyle = polyStyleFlat%
+            Object(currentObject%).polyStyle = polyStyleFlat%
 
         CASE "s", "S"
-            object(currentObject%).polyStyle = polyStyleGouraud%
+            Object(currentObject%).polyStyle = polyStyleGouraud%
 
         CASE "d", "D"
-            object(currentObject%).polyStyle = polyStyleTextured%
+            Object(currentObject%).polyStyle = polyStyleTextured%
 
         CASE "p", "P"
             colBase% = (colBase% + 64) AND 255
-            ChangeBaseOjectPolygonsColor object(currentObject%), colBase%
+            ChangeBaseOjectPolygonsColor Object(currentObject%), colBase%
         CASE ELSE
 
     END SELECT
@@ -1280,8 +1326,8 @@ SUB HandleInput (dt!)
         IF zBase! + posZ! < minAllowedZ! THEN posZ! = minAllowedZ! - zBase!
         IF zBase! + posZ! > maxAllowedZ! THEN posZ! = maxAllowedZ! - zBase!
 
-        SetObjectPosition object(currentObject%), posX!, posY!, zBase! + posZ!
-        SetObjectRotation object(currentObject%), rotX!, rotY!, rotZ!
+        SetObjectPosition Object(currentObject%), posX!, posY!, zBase! + posZ!
+        SetObjectRotation Object(currentObject%), rotX!, rotY!, rotZ!
 
         rotX! = rotX! + dt! * rotVelX!
         rotY! = rotY! + dt! * rotVelY!
@@ -1329,9 +1375,8 @@ SUB InitScene3D
 
     CONST defaultScaleRange! = 1024 - 128
 
-    object(currentObject%).renderType = renderTypePoly%
-    object(currentObject%).polyStyle = polyStyleFlat%
-    mustFlipPolygonOrientation% = FALSE%
+    Object(currentObject%).renderType = renderTypePoly%
+    Object(currentObject%).polyStyle = polyStyleFlat%
 
     SELECT CASE currentObject%
 
@@ -1340,7 +1385,7 @@ SUB InitScene3D
 
         CASE objGenDotCube%
             genParams.size = 16
-            object(currentObject%).renderType = renderTypeDots%
+            Object(currentObject%).renderType = renderTypeDots%
 
         CASE objGenSphere%
 
@@ -1359,17 +1404,15 @@ SUB InitScene3D
 
     IF objectLoadFile$ = "" THEN
         genParams.index = currentObject%
-        GenObject3D genParams, object(currentObject%)
+        GenObject3D genParams, Object(currentObject%)
     ELSE
-        LoadObject3D objectLoadFile$, object(currentObject%)
+        LoadObject3D objectLoadFile$, Object(currentObject%)
 
-        FindObjectScaleToFit object(currentObject%), defaultScaleRange!, scaleValue!
-        ScaleObjectVertices object(currentObject%), scaleValue!
+        FindObjectScaleToFit Object(currentObject%), defaultScaleRange!, scaleValue!
+        ScaleObjectVertices Object(currentObject%), scaleValue!
 
-        IF mustFlipPolygonOrientation% THEN FlipPolygonOrientation object(currentObject%)
-   
-        CalcObjectPolyNormals object(currentObject%)
-        CalcObjectVertexNormals object(currentObject%)
+        CalcObjectPolyNormals Object(currentObject%)
+        CalcObjectVertexNormals Object(currentObject%)
     END IF
 
 END SUB
@@ -1387,6 +1430,64 @@ SUB InvertMatrix (srcMat!(), dstMat!())
 END SUB
 
 SUB LoadObject3D (objFile$, obj AS Object3D)
+
+    ' Should detect file extension, also later do something with orientation and different 3DO file formats or crashes
+    LoadObject3Dplg objFile$, obj
+    'LoadObject3D3do objFile$, obj
+
+END SUB
+
+SUB LoadObject3D3do (objFile$, obj AS Object3D)
+
+    obj.verticesOffset = currentVertexAdd%
+    obj.polyIndicesOffset = currentPolyIndexAdd%
+    obj.lineIndicesOffset = currentLineIndexAdd%
+    obj.polysOffset = currentPolyAdd%
+    obj.polyNormalsOffset = currentPolyNormalAdd%
+    obj.vertexNormalsOffset = currentVertexNormalAdd%
+
+    OPEN objFile$ FOR BINARY AS #1
+
+    GET #1, , ndts%
+    GET #1, , nlns%
+    GET #1, , npls%
+
+    obj.numVertices = ndts%
+    obj.numPolys = npls%
+    obj.numPolyIndices = npls% * 3
+    obj.numLineIndices = nlns% * 2
+
+    c$ = " "
+
+    FOR i% = 0 TO ndts% - 1
+        GET #1, , c$: x% = ASC(c$) - 128
+        GET #1, , c$: y% = ASC(c$) - 128
+        GET #1, , c$: z% = ASC(c$) - 128
+        AddVertex x%, y%, z%
+    NEXT i%
+
+    FOR i% = 0 TO nlns% - 1
+        GET #1, , i0%
+        GET #1, , i1%
+        AddLineIndices i0%, i1%
+    NEXT i%
+
+    FOR i% = 0 TO npls% - 1
+        GET #1, , i0%
+        GET #1, , i1%
+        GET #1, , i2%
+        AddTriangleIndices i0%, i1%, i2%
+    NEXT i%
+
+    CLOSE #1
+
+    CenterObjectVertices obj
+
+    'FlipPolygonOrientation obj
+
+END SUB
+
+SUB LoadObject3Dplg (objFile$, obj AS Object3D)
 
     CONST maxPolyPoints% = 32
     CONST maxIndexDataNum% = 2 + maxPolyPoints%
@@ -2075,14 +2176,14 @@ SUB RunScene3D (t!)
 
         END SELECT
 
-        SetObjectPosition object(currentObject%), xt!, yt!, zt!
-        SetObjectRotation object(currentObject%), rx!, ry!, rz!
+        SetObjectPosition Object(currentObject%), xt!, yt!, zt!
+        SetObjectRotation Object(currentObject%), rx!, ry!, rz!
     END IF
 
     SetLightPosition 0, 0, 1, 0
 
-    TransformObject3D object(currentObject%)
-    RenderObject3D object(currentObject%)
+    TransformObject3D Object(currentObject%)
+    RenderObject3D Object(currentObject%)
 
 END SUB
 
