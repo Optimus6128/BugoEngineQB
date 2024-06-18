@@ -218,6 +218,9 @@ CONST FPRAST% = 64
 CONST LFPRAST& = 65536  ' experimental for higher texture interpolator precision but slower along with two functions using it, might not use it
 CONST FPNORM% = 64
 
+CONST defaultScaleRange! = 512
+
+
 CONST renderTypeDots% = 0
 CONST renderTypeWire% = 1
 CONST renderTypePoly% = 2
@@ -268,9 +271,9 @@ DIM SHARED blobTex%(0 TO ENVTEXWIDTH% * ENVTEXHEIGHT% - 1)
 
 ' ---- Object pool sizes ----
 
-CONST maxObjVertices% = 1024
-CONST avgObjVertexNum% = 256
-CONST maxObjectsOnScreen% = 4
+CONST maxObjVertices% = 2560
+CONST avgObjVertexNum% = maxObjVertices%
+CONST maxObjectsOnScreen% = 1
 CONST maxVertices% = maxObjectsOnScreen% * avgObjVertexNum%
 CONST maxPolys% = 2 * maxVertices%
 
@@ -339,7 +342,6 @@ ELSE
     SetCurrentObject objLoadTest%, objFile$
 END IF
 
-
 DIM SHARED quit%
 quit% = FALSE%
 
@@ -359,6 +361,8 @@ SetDefaultPalette
 ResetElementAddIndices
 InitScene3D
 
+'SLEEP
+'END
 
 ' ---- Main Loop ----
 
@@ -1221,9 +1225,9 @@ END SUB
 
 SUB HandleInput (dt!)
 
-    CONST zBase! = 1024
-    CONST minAllowedZ! = 512
-    CONST maxAllowedZ! = 4096 - minAllowedZ!
+    CONST zBase! = defaultScaleRange!
+    CONST minAllowedZ! = defaultScaleRange! / 2
+    CONST maxAllowedZ! = 4 * defaultScaleRange! - minAllowedZ!
     CONST posMove! = 16
     CONST zoomMove! = 64
     CONST rotSpeed! = .00025
@@ -1373,8 +1377,6 @@ SUB InitScene3D
 
     DIM genParams AS ObjGenParams
 
-    CONST defaultScaleRange! = 1024 - 128
-
     Object(currentObject%).renderType = renderTypePoly%
     Object(currentObject%).polyStyle = polyStyleFlat%
 
@@ -1432,8 +1434,8 @@ END SUB
 SUB LoadObject3D (objFile$, obj AS Object3D)
 
     ' Should detect file extension, also later do something with orientation and different 3DO file formats or crashes
-    LoadObject3Dplg objFile$, obj
-    'LoadObject3D3do objFile$, obj
+    'LoadObject3Dplg objFile$, obj
+    LoadObject3D3do objFile$, obj
 
 END SUB
 
@@ -1451,6 +1453,9 @@ SUB LoadObject3D3do (objFile$, obj AS Object3D)
     GET #1, , ndts%
     GET #1, , nlns%
     GET #1, , npls%
+
+    'PRINT ndts%, nlns%, npls%
+    'EXIT SUB
 
     obj.numVertices = ndts%
     obj.numPolys = npls%
@@ -2072,8 +2077,6 @@ END SUB
 
 SUB RenderObject3Dwire (obj AS Object3D)
 
-    CONST pointsBetween% = 32
-
     offset% = obj.lineIndicesOffset
     n% = offset% + obj.numLineIndices - 1
 
@@ -2093,8 +2096,18 @@ SUB RenderObject3Dwire (obj AS Object3D)
 
             ' Obviously I am gonna write a line renderer soon
             ' Now just testing the wireframe data with LINE basic tricked to point to our buffer segment
+            IF x0% >= 0 AND x0% < SCRWIDTH% * FPRAST% AND x1% >= 0 AND x1% < SCRWIDTH% * FPRAST% THEN
+                IF y0% >= 0 AND y0% < SCRHEIGHT% * FPRAST% AND y1% >= 0 AND y1% < SCRHEIGHT% * FPRAST% THEN
 
-            LINE (x0%, y0%)-(x1%, y1%), 63
+                    x0% = DivFPRAST%(x0%)
+                    y0% = DivFPRAST%(y0%)
+                    x1% = DivFPRAST%(x1%)
+                    y1% = DivFPRAST%(y1%)
+
+                    LINE (x0%, y0%)-(x1%, y1%), 63
+
+                END IF
+            END IF
 
         END IF
 
@@ -2148,7 +2161,7 @@ SUB RunScene3D (t!)
         SELECT CASE currentObject%
 
             CASE objGenCube%
-                zt! = 1024
+                zt! = defaultScaleRange!
 
             CASE objGenDotCube%
                 zt! = 256
@@ -2158,7 +2171,7 @@ SUB RunScene3D (t!)
             CASE objGenTorus%
 
             CASE objLoadTest%
-                zt! = 1024
+                zt! = defaultScaleRange!
 
             CASE objLoadTeapot%
                 yt! = 0
