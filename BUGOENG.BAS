@@ -37,10 +37,10 @@ TYPE Range3D
     max AS Vector3D
 END TYPE
 
-
-TYPE PolyData
-    col AS INTEGER
-    shade AS INTEGER
+TYPE PolyMaterial
+    ambient AS INTEGER
+    diffuse AS INTEGER
+    specular AS INTEGER
 END TYPE
 
 TYPE Object3D
@@ -81,8 +81,8 @@ CONST TRUE% = 1
 
 CONST PI! = 3.14159265359#
 
-CONST BENCHSECS% = 1000 ' put something high to not exit or bench or say 15 secs to run alone and exit with fps
-CONST CONTROLS% = TRUE% ' If false, auto rotate object in RunScene3D, else let the user control position/rotation
+CONST BENCHSECS% = 15 ' put something high to not exit or bench or say 15 secs to run alone and exit with fps
+CONST CONTROLS% = FALSE% ' If false, auto rotate object in RunScene3D, else let the user control position/rotation
 
 ' ---- Main Functions ----
 
@@ -93,7 +93,6 @@ DECLARE SUB InitPrecalcs ()
 DECLARE SUB SetDefaultPalette ()
 DECLARE SUB DisplayPalette ()
 
-DECLARE SUB SetVideoSeg (Segment&)
 DECLARE SUB ClearVram ()
 DECLARE SUB WriteVram ()
 DECLARE SUB WaitForVsync ()
@@ -149,7 +148,8 @@ DECLARE SUB ScaleObjectVertices (obj AS Object3D, scale!)
 DECLARE SUB CenterObjectVertices (obj AS Object3D)
 DECLARE SUB FlipPolygonOrientation (obj AS Object3D)
 
-DECLARE SUB ChangeBaseOjectPolygonsColor (obj AS Object3D, col%)
+DECLARE SUB SetMaterial (a%, d%, s%, mat AS PolyMaterial)
+DECLARE SUB ChangeObjectPolyMaterials (obj AS Object3D, matIndex%)
 
 ' ---- Object loading functions ----
 
@@ -169,7 +169,8 @@ DECLARE SUB RenderObject3Dpoly (obj AS Object3D)
 DECLARE SUB SortObject3Dpoly (obj AS Object3D)
 
 DECLARE SUB PlotPixel (x%, y%, col%)
-DECLARE SUB DrawPoly (i%, polyIndex%, polyStyle%)
+DECLARE SUB DrawLine (x1%, y1%, x2%, y2%, c%)
+DECLARE SUB DrawPoly (i%, polyOffset%, polyIndex%, polyStyle%)
 
 DECLARE SUB PrepareEdgeListsFlat ()
 DECLARE SUB PrepareEdgeListsGouraud ()
@@ -218,8 +219,7 @@ CONST FPRAST% = 64
 CONST LFPRAST& = 65536  ' experimental for higher texture interpolator precision but slower along with two functions using it, might not use it
 CONST FPNORM% = 64
 
-CONST defaultScaleRange! = 512
-
+CONST defaultScaleRange! = 1024
 
 CONST renderTypeDots% = 0
 CONST renderTypeWire% = 1
@@ -271,11 +271,14 @@ DIM SHARED blobTex%(0 TO ENVTEXWIDTH% * ENVTEXHEIGHT% - 1)
 
 ' ---- Object pool sizes ----
 
-CONST maxObjVertices% = 2560
+CONST maxObjVertices% = 2600
+CONST maxObjPolys% = 2 * maxObjVertices%
 CONST avgObjVertexNum% = maxObjVertices%
 CONST maxObjectsOnScreen% = 1
 CONST maxVertices% = maxObjectsOnScreen% * avgObjVertexNum%
 CONST maxPolys% = 2 * maxVertices%
+CONST maxPolyIndices% = 3 * maxPolys%
+CONST maxLineIndices% = 6 * maxPolys%
 
 CONST numLights% = 3
 
@@ -289,16 +292,20 @@ CONST objLoadTest% = 4
 CONST objLoadTeapot% = 5
 CONST objLoadMask% = 6
 CONST numObjects% = 7
+CONST numMaterials = 16
 
-DIM SHARED Object(0 TO numObjects% - 1) AS Object3D
+DIM SHARED object(0 TO numObjects% - 1) AS Object3D
+
+DIM SHARED material(0 TO numMaterials% - 1) AS PolyMaterial
 
 DIM SHARED screenVertices(0 TO maxObjVertices% - 1) AS Element3D
+DIM SHARED screenPolyShades%(0 TO maxObjPolys% - 1)
 DIM SHARED transformedVertexNormals(0 TO maxObjVertices% - 1) AS IVector3D
 
 DIM SHARED objectVertices(0 TO maxVertices% - 1) AS Vertex3D
-DIM SHARED objectPolyIndices%(0 TO 3 * maxPolys% - 1)
-DIM SHARED objectLineIndices%(0 TO 6 * maxPolys% - 1)
-DIM SHARED objectPolygons(0 TO maxPolys% - 1) AS PolyData
+DIM SHARED objectPolyIndices%(0 TO maxPolyIndices% - 1)
+DIM SHARED objectLineIndices%(0 TO maxLineIndices% - 1)
+DIM SHARED objectPolyMatIndices%(0 TO maxPolys% - 1)
 
 DIM SHARED objectPolyNormals(0 TO maxPolys% - 1) AS IVector3D
 DIM SHARED objectVertexNormals(0 TO maxVertices% - 1) AS IVector3D
@@ -342,6 +349,7 @@ ELSE
     SetCurrentObject objLoadTest%, objFile$
 END IF
 
+
 DIM SHARED quit%
 quit% = FALSE%
 
@@ -361,8 +369,6 @@ SetDefaultPalette
 ResetElementAddIndices
 InitScene3D
 
-'SLEEP
-'END
 
 ' ---- Main Loop ----
 
@@ -418,10 +424,12 @@ END SUB
 
 SUB AddLineIndices (i0%, i1%)
 
-    objectLineIndices%(currentLineIndexAdd%) = i0%
-    objectLineIndices%(currentLineIndexAdd% + 1) = i1%
+    IF currentLineIndexAdd% <= maxLineIndices% - 2 THEN
+        objectLineIndices%(currentLineIndexAdd%) = i0%
+        objectLineIndices%(currentLineIndexAdd% + 1) = i1%
 
-    currentLineIndexAdd% = currentLineIndexAdd% + 2
+        currentLineIndexAdd% = currentLineIndexAdd% + 2
+    END IF
 
 END SUB
 
@@ -437,11 +445,13 @@ END SUB
 
 SUB AddTriangleIndices (i0%, i1%, i2%)
 
-    objectPolyIndices%(currentPolyIndexAdd%) = i0%
-    objectPolyIndices%(currentPolyIndexAdd% + 1) = i1%
-    objectPolyIndices%(currentPolyIndexAdd% + 2) = i2%
+    IF currentPolyIndexAdd% <= maxPolyIndices% - 3 THEN
+        objectPolyIndices%(currentPolyIndexAdd%) = i0%
+        objectPolyIndices%(currentPolyIndexAdd% + 1) = i1%
+        objectPolyIndices%(currentPolyIndexAdd% + 2) = i2%
 
-    currentPolyIndexAdd% = currentPolyIndexAdd% + 3
+        currentPolyIndexAdd% = currentPolyIndexAdd% + 3
+    END IF
 
 END SUB
 
@@ -539,15 +549,15 @@ SUB CalcObjectPolyLighting (obj AS Object3D, light AS Vector3D)
     SetIVec iLight, INT(rotLight.x * FPNORM%), INT(rotLight.y * FPNORM%), INT(rotLight.z * FPNORM%)
 
     offset% = obj.polyNormalsOffset
-    n% = offset% + obj.numPolys - 1
+    n% = obj.numPolys - 1
 
-    FOR i% = offset% TO n%
-        DotIVec objectPolyNormals(i%), iLight, d%
+    FOR i% = 0 TO n%
+        DotIVec objectPolyNormals(offset% + i%), iLight, d%
 
         IF d% < 0 THEN d% = 0
         IF d% > FPNORM% THEN d% = FPNORM%
 
-        objectPolygons(i%).shade = (63 * d%) \ FPNORM%
+        screenPolyShades%(i%) = (63 * d%) \ FPNORM%
     NEXT i%
 
 END SUB
@@ -729,10 +739,10 @@ SUB CenterObjectVertices (obj AS Object3D)
 
 END SUB
 
-SUB ChangeBaseOjectPolygonsColor (obj AS Object3D, col%)
+SUB ChangeObjectPolyMaterials (obj AS Object3D, matIndex%)
 
     FOR i% = 0 TO obj.numPolys - 1
-        objectPolygons(i%).col = col%
+        objectPolyMatIndices%(i%) = matIndex%
     NEXT i%
 
 END SUB
@@ -816,9 +826,6 @@ SUB DrawEdgesFlat (col%)
 
             xs0% = DivFPRAST%(xs0%)
             xs1% = DivFPRAST%(xs1%) - 1 ' one pixel less right to avoid overdraw
-
-            'Idea with horizontal lines and SetVideoSeg to trick Qbasic to LINE on our buffer but below code is faster
-            'LINE (xs0%, y%)-(xs1%, y%), col%
 
             DEF SEG = screenSeg& + ys%
 
@@ -989,7 +996,54 @@ SUB DrawEdgesTexturedHP
 
 END SUB
 
-SUB DrawPoly (i%, polyIndex%, polyStyle%)
+SUB DrawLine (x0%, y0%, x1%, y1%, c%)
+
+    screenSeg& = VARSEG(vram%(0)) + 1
+
+    dx% = x1% - x0%
+    dy% = y1% - y0%
+
+    lx% = ABS(dx%)
+    ly% = ABS(dy%)
+
+    n% = 1
+    IF ly% < lx% THEN
+        IF dx% <> 0 THEN l% = (dy% * FPRAST%) \ dx%
+        IF x0% > x1% THEN n% = -1
+        ns% = n% * l%
+
+        yy% = y0% * FPRAST%
+        FOR x% = x0% TO x1% STEP n%
+            yp% = yy% \ FPRAST%
+            IF yp% >= 0 AND yp% < SCRHEIGHT% THEN
+                IF x% >= 0 AND x% < SCRWIDTH% THEN
+                    DEF SEG = screenSeg& + yp% * 20
+                    POKE x%, c%
+                END IF
+            END IF
+            yy% = yy% + ns%
+        NEXT x%
+    ELSE
+        IF dy% <> 0 THEN l% = (dx% * FPRAST%) \ dy%
+        IF y0% > y1% THEN n% = -1
+        ns% = n% * l%
+
+        xx% = x0% * FPRAST%
+        FOR y% = y1% TO y2% STEP n%
+            xp% = xx% \ FPRAST%
+            IF y% >= 0 AND y% < SCRHEIGHT% THEN
+                IF xp% >= 0 AND xp% < SCRWIDTH% THEN
+                    DEF SEG = screenSeg& + y% * 20
+                    POKE xp%, c%
+                END IF
+            END IF
+            xx% = xx% + ns%
+        NEXT y%
+    END IF
+
+END SUB
+
+SUB DrawPoly (i%, polyOffset%, polyIndex%, polyStyle%)
 
     i0% = objectPolyIndices%(i%)
     i1% = objectPolyIndices%(i% + 1)
@@ -1029,13 +1083,14 @@ SUB DrawPoly (i%, polyIndex%, polyStyle%)
 
     IF edgeYmax% > edgeYmin% THEN
 
-        col% = objectPolygons(polyIndex%).col
+        matIndex% = objectPolyMatIndices%(polyOffset% + polyIndex%)
+        col% = material(matIndex%).ambient
 
         SELECT CASE polyStyle%
 
             CASE polyStyleFlat%
                 PrepareEdgeListsFlat
-                DrawEdgesFlat col% + objectPolygons(polyIndex%).shade
+                DrawEdgesFlat col% + screenPolyShades%(polyIndex%)
 
             CASE polyStyleGouraud%
                 PrepareEdgeListsGouraud
@@ -1236,7 +1291,7 @@ SUB HandleInput (dt!)
     STATIC rotX!, rotY!, rotZ!
     STATIC rotVelX!, rotVelY!, rotVelZ!
 
-    STATIC colBase%
+    STATIC currentMatIndex%
 
 
     key$ = INKEY$
@@ -1251,26 +1306,26 @@ SUB HandleInput (dt!)
     SELECT CASE key$
 
         CASE "q", "Q"
-            Object(currentObject%).renderType = renderTypeDots%
+            object(currentObject%).renderType = renderTypeDots%
 
         CASE "w", "W"
-            Object(currentObject%).renderType = renderTypeWire%
+            object(currentObject%).renderType = renderTypeWire%
 
         CASE "e", "E"
-            Object(currentObject%).renderType = renderTypePoly%
+            object(currentObject%).renderType = renderTypePoly%
 
         CASE "a", "A"
-            Object(currentObject%).polyStyle = polyStyleFlat%
+            object(currentObject%).polyStyle = polyStyleFlat%
 
         CASE "s", "S"
-            Object(currentObject%).polyStyle = polyStyleGouraud%
+            object(currentObject%).polyStyle = polyStyleGouraud%
 
         CASE "d", "D"
-            Object(currentObject%).polyStyle = polyStyleTextured%
+            object(currentObject%).polyStyle = polyStyleTextured%
 
         CASE "p", "P"
-            colBase% = (colBase% + 64) AND 255
-            ChangeBaseOjectPolygonsColor Object(currentObject%), colBase%
+            currentMatIndex% = (currentMatIndex% + 1) AND 3
+            ChangeObjectPolyMaterials object(currentObject%), currentMatIndex%
         CASE ELSE
 
     END SELECT
@@ -1330,8 +1385,8 @@ SUB HandleInput (dt!)
         IF zBase! + posZ! < minAllowedZ! THEN posZ! = minAllowedZ! - zBase!
         IF zBase! + posZ! > maxAllowedZ! THEN posZ! = maxAllowedZ! - zBase!
 
-        SetObjectPosition Object(currentObject%), posX!, posY!, zBase! + posZ!
-        SetObjectRotation Object(currentObject%), rotX!, rotY!, rotZ!
+        SetObjectPosition object(currentObject%), posX!, posY!, zBase! + posZ!
+        SetObjectRotation object(currentObject%), rotX!, rotY!, rotZ!
 
         rotX! = rotX! + dt! * rotVelX!
         rotY! = rotY! + dt! * rotVelY!
@@ -1347,6 +1402,12 @@ SUB InitPrecalcs
 
     FOR i% = 0 TO DivFPRASTrange% - 1
         DivFPRAST%(i%) = i% \ FPRAST%
+    NEXT i%
+
+' Some materials
+
+    FOR i% = 0 TO 3
+        SetMaterial i% * 64, 0, 64, material(i%)
     NEXT i%
 
 ' Texture for envmap
@@ -1377,8 +1438,8 @@ SUB InitScene3D
 
     DIM genParams AS ObjGenParams
 
-    Object(currentObject%).renderType = renderTypePoly%
-    Object(currentObject%).polyStyle = polyStyleFlat%
+    object(currentObject%).renderType = renderTypePoly%
+    object(currentObject%).polyStyle = polyStyleGouraud%
 
     SELECT CASE currentObject%
 
@@ -1387,7 +1448,7 @@ SUB InitScene3D
 
         CASE objGenDotCube%
             genParams.size = 16
-            Object(currentObject%).renderType = renderTypeDots%
+            object(currentObject%).renderType = renderTypeDots%
 
         CASE objGenSphere%
 
@@ -1406,15 +1467,15 @@ SUB InitScene3D
 
     IF objectLoadFile$ = "" THEN
         genParams.index = currentObject%
-        GenObject3D genParams, Object(currentObject%)
+        GenObject3D genParams, object(currentObject%)
     ELSE
-        LoadObject3D objectLoadFile$, Object(currentObject%)
+        LoadObject3D objectLoadFile$, object(currentObject%)
 
-        FindObjectScaleToFit Object(currentObject%), defaultScaleRange!, scaleValue!
-        ScaleObjectVertices Object(currentObject%), scaleValue!
+        FindObjectScaleToFit object(currentObject%), defaultScaleRange!, scaleValue!
+        ScaleObjectVertices object(currentObject%), scaleValue!
 
-        CalcObjectPolyNormals Object(currentObject%)
-        CalcObjectVertexNormals Object(currentObject%)
+        CalcObjectPolyNormals object(currentObject%)
+        CalcObjectVertexNormals object(currentObject%)
     END IF
 
 END SUB
@@ -1434,8 +1495,20 @@ END SUB
 SUB LoadObject3D (objFile$, obj AS Object3D)
 
     ' Should detect file extension, also later do something with orientation and different 3DO file formats or crashes
-    'LoadObject3Dplg objFile$, obj
-    LoadObject3D3do objFile$, obj
+
+    ext$ = RIGHT$(objFile$, 3)
+
+    SELECT CASE ext$
+
+        CASE "plg"
+            LoadObject3Dplg objFile$, obj
+
+        CASE "3do"
+            LoadObject3D3do objFile$, obj
+
+        CASE ELSE
+
+    END SELECT
 
 END SUB
 
@@ -1453,9 +1526,6 @@ SUB LoadObject3D3do (objFile$, obj AS Object3D)
     GET #1, , ndts%
     GET #1, , nlns%
     GET #1, , npls%
-
-    'PRINT ndts%, nlns%, npls%
-    'EXIT SUB
 
     obj.numVertices = ndts%
     obj.numPolys = npls%
@@ -1991,7 +2061,6 @@ SUB RenderObject3D (obj AS Object3D)
 
     ' Set basic VideoSeg to our buffer in case I want to use LINE,PSET,CIRCLE,etc
     screenSeg& = VARSEG(vram%(0)) + 1
-    SetVideoSeg (screenSeg&)
 
     SELECT CASE obj.renderType
 
@@ -2059,23 +2128,23 @@ SUB RenderObject3Dpoly (obj AS Object3D)
         count% = zBucket%(zSlot%, 0)
         FOR n% = 1 TO count%
             i% = zBucket%(zSlot%, n%)
-            polyIndex% = polyOffset% + (i% - indexOffset%) \ 3  ' I will think if it's worth it storing this too or recalculating. Probably not.
-
-            DrawPoly i%, polyIndex%, polyStyle%
+            polyIndex% = (i% - indexOffset%) \ 3
+            DrawPoly i%, polyOffset%, polyIndex%, polyStyle%
         NEXT n%
     NEXT zSlot%
 
     leftoversCount% = zBucketLeftovers%(0)
     FOR n% = 1 TO leftoversCount%
         i% = zBucketLeftovers%(n%)
-        polyIndex% = polyOffset% + (i% - indexOffset%) \ 3
-
-        DrawPoly i%, polyIndex%, polyStyle%
+        polyIndex% = (i% - indexOffset%) \ 3
+        DrawPoly i%, polyOffset%, polyIndex%, polyStyle%
     NEXT n%
 
 END SUB
 
 SUB RenderObject3Dwire (obj AS Object3D)
+
+    CONST pointsBetween% = 32
 
     offset% = obj.lineIndicesOffset
     n% = offset% + obj.numLineIndices - 1
@@ -2094,8 +2163,6 @@ SUB RenderObject3Dwire (obj AS Object3D)
             x1% = screenVertices(i1%).x
             y1% = screenVertices(i1%).y
 
-            ' Obviously I am gonna write a line renderer soon
-            ' Now just testing the wireframe data with LINE basic tricked to point to our buffer segment
             IF x0% >= 0 AND x0% < SCRWIDTH% * FPRAST% AND x1% >= 0 AND x1% < SCRWIDTH% * FPRAST% THEN
                 IF y0% >= 0 AND y0% < SCRHEIGHT% * FPRAST% AND y1% >= 0 AND y1% < SCRHEIGHT% * FPRAST% THEN
 
@@ -2104,8 +2171,8 @@ SUB RenderObject3Dwire (obj AS Object3D)
                     x1% = DivFPRAST%(x1%)
                     y1% = DivFPRAST%(y1%)
 
-                    LINE (x0%, y0%)-(x1%, y1%), 63
-
+                    DrawLine x0%, y0%, x1%, y1%, 63
+               
                 END IF
             END IF
 
@@ -2189,14 +2256,14 @@ SUB RunScene3D (t!)
 
         END SELECT
 
-        SetObjectPosition Object(currentObject%), xt!, yt!, zt!
-        SetObjectRotation Object(currentObject%), rx!, ry!, rz!
+        SetObjectPosition object(currentObject%), xt!, yt!, zt!
+        SetObjectRotation object(currentObject%), rx!, ry!, rz!
     END IF
 
     SetLightPosition 0, 0, 1, 0
 
-    TransformObject3D Object(currentObject%)
-    RenderObject3D Object(currentObject%)
+    TransformObject3D object(currentObject%)
+    RenderObject3D object(currentObject%)
 
 END SUB
 
@@ -2305,6 +2372,14 @@ SUB SetLightPosition (x!, y!, z!, index%)
 
 END SUB
 
+SUB SetMaterial (a%, d%, s%, mat AS PolyMaterial)
+
+    mat.ambient = a%
+    mat.diffuse = d%
+    mat.specular = s%
+
+END SUB
+
 SUB SetObjectPosition (obj AS Object3D, px!, py!, pz!)
 
     obj.position.x = px!
@@ -2318,72 +2393,6 @@ SUB SetObjectRotation (obj AS Object3D, rx!, ry!, rz!)
     obj.rotation.x = rx!
     obj.rotation.y = ry!
     obj.rotation.z = rz!
-
-END SUB
-
-SUB SetVideoSeg (Segment&)
-
-  '=========================================================================
-  ' SetVideoSeg 1.2 by Plasma / Jon Petrosky  [04-22-2004]
-  '-------------------------------------------------------------------------
-  ' Changes QB's active video segment for SCREEN 13.
-  '-------------------------------------------------------------------------
-  ' Parameters: Segment = active video segment to use
-  '                       (&HA000 for the screen)
-  '
-  ' Returns:             0 = Error (could not find b$SegC)
-  '          anything else = Offset of b$SegC from the default segment
-  '                          (used by SuperPut)
-  '-------------------------------------------------------------------------
-  ' * Works for all graphics functions (does not work with PRINT)
-  ' * Compatible with SuperPut (any version)
-  ' * Compatible with:      QBASIC 1.x
-  '                     QuickBASIC 4.x (IDE & compiled)
-  '                         QB PDS 7.x (IDE & compiled)
-  '                          VBDOS 1.0 (IDE & compiled)
-  '
-  '   Note: If you compile your program, it must be compiled as a
-  '         stand-alone EXE!
-  '=========================================================================
-
-  STATIC VideoSegOff%
-  DEF SEG
-
-  ' If SetVideoSeg was previously called, we can just
-  ' set the new segment and bail.
-  IF VideoSegOff% <> 0 THEN
-    POKE VideoSegOff%, Segment& AND &HFF
-    POKE VideoSegOff% + 1, (Segment& AND &HFF00&) \ &H100
-    FoundVideoSeg% = VideoSegOff%
-    EXIT SUB
-  END IF
-
-
-  ' Otherwise we have to search for b$AddrC, which holds the
-  ' graphics offset (b$OffC) and segment (b$SegC). Since b$AddrC
-  ' is in the default segment, we can find it by setting it to a
-  ' certain value, and then searching for that value.
-
-  SCREEN 13             ' Set b$SegC to A000 (00A0 in memory)
-  PSET (160, 100), 0    ' Set b$OffC to 7DA0
-
-  ' Search for b$AddrC, which is in the default segment and
-  ' should have a value of A0 7D 00 A0.
-  FOR i% = 0 TO &H7FFC
-    IF PEEK(i%) = &HA0 AND PEEK(i% + 1) = &H7D THEN
-    IF PEEK(i% + 2) = &H0 AND PEEK(i% + 3) = &HA0 THEN
-      ' Found it, so set b$SegC to the specified segment and exit
-      VideoSegOff% = i% + 2
-      POKE VideoSegOff%, Segment& AND &HFF
-      POKE VideoSegOff% + 1, (Segment& AND &HFF00&) \ &H100
-      FoundVideoSeg% = VideoSegOff%
-      EXIT SUB
-    END IF
-    END IF
-  NEXT
-
-  ' Return an error (couldn't find b$SecC)
-  FoundVideoSeg% = 0
 
 END SUB
 
@@ -2502,7 +2511,6 @@ END SUB
 
 SUB WriteVram
 
-    SetVideoSeg (&HA000)
     PUT (0, 0), vram%(6), PSET
 
 END SUB
