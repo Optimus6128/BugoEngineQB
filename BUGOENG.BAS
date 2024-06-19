@@ -81,8 +81,8 @@ CONST TRUE% = 1
 
 CONST PI! = 3.14159265359#
 
-CONST BENCHSECS% = 15 ' put something high to not exit or bench or say 15 secs to run alone and exit with fps
-CONST CONTROLS% = FALSE% ' If false, auto rotate object in RunScene3D, else let the user control position/rotation
+CONST BENCHSECS% = 1000 ' put something high to not exit or bench or say 15 secs to run alone and exit with fps
+CONST CONTROLS% = TRUE% ' If false, auto rotate object in RunScene3D, else let the user control position/rotation
 
 ' ---- Main Functions ----
 
@@ -169,7 +169,7 @@ DECLARE SUB RenderObject3Dpoly (obj AS Object3D)
 DECLARE SUB SortObject3Dpoly (obj AS Object3D)
 
 DECLARE SUB PlotPixel (x%, y%, col%)
-DECLARE SUB DrawLine (x1%, y1%, x2%, y2%, c%)
+DECLARE SUB DrawLine (x0%, y0%, x1%, y1%, c%)
 DECLARE SUB DrawPoly (i%, polyOffset%, polyIndex%, polyStyle%)
 
 DECLARE SUB PrepareEdgeListsFlat ()
@@ -1014,13 +1014,8 @@ SUB DrawLine (x0%, y0%, x1%, y1%, c%)
 
         yy% = y0% * FPRAST%
         FOR x% = x0% TO x1% STEP n%
-            yp% = yy% \ FPRAST%
-            IF yp% >= 0 AND yp% < SCRHEIGHT% THEN
-                IF x% >= 0 AND x% < SCRWIDTH% THEN
-                    DEF SEG = screenSeg& + yp% * 20
-                    POKE x%, c%
-                END IF
-            END IF
+            DEF SEG = screenSeg& + DivFPRAST%(yy%) * 20
+            POKE x%, c%
             yy% = yy% + ns%
         NEXT x%
     ELSE
@@ -1029,14 +1024,9 @@ SUB DrawLine (x0%, y0%, x1%, y1%, c%)
         ns% = n% * l%
 
         xx% = x0% * FPRAST%
-        FOR y% = y1% TO y2% STEP n%
-            xp% = xx% \ FPRAST%
-            IF y% >= 0 AND y% < SCRHEIGHT% THEN
-                IF xp% >= 0 AND xp% < SCRWIDTH% THEN
-                    DEF SEG = screenSeg& + y% * 20
-                    POKE xp%, c%
-                END IF
-            END IF
+        FOR y% = y0% TO y1% STEP n%
+            DEF SEG = screenSeg& + y% * 20
+            POKE DivFPRAST%(xx%), c% - 4 * stopper%
             xx% = xx% + ns%
         NEXT y%
     END IF
