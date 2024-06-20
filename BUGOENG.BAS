@@ -81,7 +81,7 @@ CONST TRUE% = 1
 
 CONST PI! = 3.14159265359#
 
-CONST BENCHSECS% = 1000 ' put something high to not exit or bench or say 15 secs to run alone and exit with fps
+CONST BENCHSECS% = 1500 ' put something high to not exit or bench or say 15 secs to run alone and exit with fps
 CONST CONTROLS% = TRUE% ' If false, auto rotate object in RunScene3D, else let the user control position/rotation
 
 ' ---- Main Functions ----
@@ -91,6 +91,7 @@ DECLARE SUB FFIX (Mode%)
 DECLARE SUB InitPrecalcs ()
 
 DECLARE SUB SetDefaultPalette ()
+DECLARE SUB SetGradPal (c0%, c1%, r0%, g0%, b0%, r1%, g1%, b1%)
 DECLARE SUB DisplayPalette ()
 
 DECLARE SUB ClearVram ()
@@ -143,7 +144,7 @@ DECLARE SUB AddVertexNormal (x%, y%, z%)
 
 DECLARE SUB CalcObjectVerticesRange (obj AS Object3D, range AS Range3D)
 DECLARE SUB FindObjectScaleToFit (obj AS Object3D, desiredRange!, scale!)
-DECLARE SUB ScaleObjectVertices (obj AS Object3D, scale!)
+DECLARE SUB ScaleObjectVertices (obj AS Object3D, scaleX!, scaleY!, scaleZ!)
 
 DECLARE SUB CenterObjectVertices (obj AS Object3D)
 DECLARE SUB FlipPolygonOrientation (obj AS Object3D)
@@ -356,7 +357,7 @@ quit% = FALSE%
 ' ---- Init ----
 
 ' Load FFIX to memory
-FFIX 0
+'FFIX 0
 
 InitPrecalcs
 
@@ -365,6 +366,10 @@ SCREEN 13
 COLOR 63
 
 SetDefaultPalette
+
+'SetGradPal 0, 31, 15, 7, 31, 127, 63, 191
+'SetGradPal 32, 63, 127, 63, 191, 255, 255, 255
+
 
 ResetElementAddIndices
 InitScene3D
@@ -381,6 +386,7 @@ timeElapsed! = 0
 t! = 0
 
 timeStart! = TIMER
+lastTime! = timeStart!
 DO WHILE quit% = FALSE% AND timeElapsed! < BENCHSECS%
 
     IF BLURSWITCH% = 0 THEN ClearVram
@@ -404,7 +410,8 @@ DO WHILE quit% = FALSE% AND timeElapsed! < BENCHSECS%
     t! = t! + .01
     nframe& = nframe& + 1
 
-    timeElapsed! = TIMER - timeStart!
+    timeElapsed! = TIMER - lastTime!
+    lastTime! = TIMER
 LOOP
 timeEnd! = TIMER
 
@@ -412,7 +419,7 @@ PRINT nframe& / (timeEnd! - timeStart!)
 SLEEP
 
 ' Unload FFIX from memory
-FFIX 1
+'FFIX 1
 
 SUB AddIVec (vSrc1 AS IVector3D, vSrc2 AS IVector3D, vDst AS IVector3D)
 
@@ -435,11 +442,13 @@ END SUB
 
 SUB AddPolyNormal (x%, y%, z%)
 
-    objectPolyNormals(currentPolyNormalAdd%).x = x%
-    objectPolyNormals(currentPolyNormalAdd%).y = y%
-    objectPolyNormals(currentPolyNormalAdd%).z = z%
+    IF currentPolyNormalAdd% <= maxPolys% - 3 THEN
+        objectPolyNormals(currentPolyNormalAdd%).x = x%
+        objectPolyNormals(currentPolyNormalAdd%).y = y%
+        objectPolyNormals(currentPolyNormalAdd%).z = z%
 
-    currentPolyNormalAdd% = currentPolyNormalAdd% + 1
+        currentPolyNormalAdd% = currentPolyNormalAdd% + 1
+    END IF
 
 END SUB
 
@@ -457,21 +466,25 @@ END SUB
 
 SUB AddVertex (x%, y%, z%)
 
-    objectVertices(currentVertexAdd%).x = x%
-    objectVertices(currentVertexAdd%).y = y%
-    objectVertices(currentVertexAdd%).z = z%
+    IF currentVertexAdd% <= maxVertices% - 3 THEN
+        objectVertices(currentVertexAdd%).x = x%
+        objectVertices(currentVertexAdd%).y = y%
+        objectVertices(currentVertexAdd%).z = z%
 
-    currentVertexAdd% = currentVertexAdd% + 1
+        currentVertexAdd% = currentVertexAdd% + 1
+    END IF
 
 END SUB
 
 SUB AddVertexNormal (x%, y%, z%)
 
-    objectVertexNormals(currentVertexNormalAdd%).x = x%
-    objectVertexNormals(currentVertexNormalAdd%).y = y%
-    objectVertexNormals(currentVertexNormalAdd%).z = z%
+    IF currentVertexNormalAdd% <= maxVertices% - 3 THEN
+        objectVertexNormals(currentVertexNormalAdd%).x = x%
+        objectVertexNormals(currentVertexNormalAdd%).y = y%
+        objectVertexNormals(currentVertexNormalAdd%).z = z%
 
-    currentVertexNormalAdd% = currentVertexNormalAdd% + 1
+        currentVertexNormalAdd% = currentVertexNormalAdd% + 1
+    END IF
 
 END SUB
 
@@ -1275,7 +1288,7 @@ SUB HandleInput (dt!)
     CONST maxAllowedZ! = 4 * defaultScaleRange! - minAllowedZ!
     CONST posMove! = 16
     CONST zoomMove! = 64
-    CONST rotSpeed! = .00025
+    CONST rotSpeed! = .05
 
     STATIC posX!, posY!, posZ!
     STATIC rotX!, rotY!, rotZ!
@@ -1316,6 +1329,21 @@ SUB HandleInput (dt!)
         CASE "p", "P"
             currentMatIndex% = (currentMatIndex% + 1) AND 3
             ChangeObjectPolyMaterials object(currentObject%), currentMatIndex%
+
+        CASE "z", "Z"
+            rotX! = rotX! + PI! / 2
+
+        CASE "x", "X"
+            rotY! = rotY! + PI! / 2
+
+        CASE "y", "Y"
+            rotZ! = rotZ! + PI! / 2
+
+        CASE "f", "F"
+            FlipPolygonOrientation object(currentObject%)
+            CalcObjectPolyNormals object(currentObject%)
+            CalcObjectVertexNormals object(currentObject%)
+
         CASE ELSE
 
     END SELECT
@@ -1429,7 +1457,7 @@ SUB InitScene3D
     DIM genParams AS ObjGenParams
 
     object(currentObject%).renderType = renderTypePoly%
-    object(currentObject%).polyStyle = polyStyleGouraud%
+    object(currentObject%).polyStyle = polyStyleFlat%
 
     SELECT CASE currentObject%
 
@@ -1462,7 +1490,7 @@ SUB InitScene3D
         LoadObject3D objectLoadFile$, object(currentObject%)
 
         FindObjectScaleToFit object(currentObject%), defaultScaleRange!, scaleValue!
-        ScaleObjectVertices object(currentObject%), scaleValue!
+        ScaleObjectVertices object(currentObject%), scaleValue!, scaleValue!, scaleValue!
 
         CalcObjectPolyNormals object(currentObject%)
         CalcObjectVertexNormals object(currentObject%)
@@ -1504,6 +1532,8 @@ END SUB
 
 SUB LoadObject3D3do (objFile$, obj AS Object3D)
 
+    fileVersion% = 2
+
     obj.verticesOffset = currentVertexAdd%
     obj.polyIndicesOffset = currentPolyIndexAdd%
     obj.lineIndicesOffset = currentLineIndexAdd%
@@ -1517,19 +1547,41 @@ SUB LoadObject3D3do (objFile$, obj AS Object3D)
     GET #1, , nlns%
     GET #1, , npls%
 
+    a& = ndts%: b& = nlns%: c& = npls%
+    s& = a& * 3 + b& * 2 * 2 + c& * 3 * 2 + 6
+    flen& = LOF(1)
+    IF flen& <> s& THEN
+        s& = a& * 3 * 4 + b& * 3 * 2 + 4  ' what if lines are missing and 4 bytes per vertex
+        IF s& = flen& THEN
+            fileVersion% = 1
+            npls% = nlns%
+            nlns% = 0
+            SEEK #1, SEEK(1) - 2
+        END IF
+    END IF
+
     obj.numVertices = ndts%
     obj.numPolys = npls%
     obj.numPolyIndices = npls% * 3
     obj.numLineIndices = nlns% * 2
 
-    c$ = " "
+    IF fileVersion% = 1 THEN
+        FOR i% = 0 TO ndts% - 1
+            GET #1, , x&
+            GET #1, , y&
+            GET #1, , z&
+            AddVertex INT(x& \ 65536), INT(y& \ 65536), INT(z& \ 65536)
+        NEXT i%
+    ELSE
+        c$ = " "
 
-    FOR i% = 0 TO ndts% - 1
-        GET #1, , c$: x% = ASC(c$) - 128
-        GET #1, , c$: y% = ASC(c$) - 128
-        GET #1, , c$: z% = ASC(c$) - 128
-        AddVertex x%, y%, z%
-    NEXT i%
+        FOR i% = 0 TO ndts% - 1
+            GET #1, , c$: x% = ASC(c$) - 128
+            GET #1, , c$: y% = ASC(c$) - 128
+            GET #1, , c$: z% = ASC(c$) - 128
+            AddVertex x%, y%, z%
+        NEXT i%
+    END IF
 
     FOR i% = 0 TO nlns% - 1
         GET #1, , i0%
@@ -1548,7 +1600,12 @@ SUB LoadObject3D3do (objFile$, obj AS Object3D)
 
     CenterObjectVertices obj
 
-    'FlipPolygonOrientation obj
+    ScaleObjectVertices obj, 1, -1, 1   ' all come flipped on Y
+
+    ' hack for certain objects
+    IF NOT objFile$ = "duck.3do" AND NOT objFile$ = "duck2.3do" THEN
+        FlipPolygonOrientation obj
+    END IF
 
 END SUB
 
@@ -2265,7 +2322,7 @@ SUB ScaleIVec (vec AS IVector3D, scale!)
 
 END SUB
 
-SUB ScaleObjectVertices (obj AS Object3D, scale!)
+SUB ScaleObjectVertices (obj AS Object3D, scaleX!, scaleY!, scaleZ!)
 
     offset% = obj.verticesOffset
     n% = obj.numVertices - 1
@@ -2273,9 +2330,9 @@ SUB ScaleObjectVertices (obj AS Object3D, scale!)
     FOR i% = 0 TO n%
         k% = i% + offset%
 
-        objectVertices(k%).x = scale! * objectVertices(k%).x
-        objectVertices(k%).y = scale! * objectVertices(k%).y
-        objectVertices(k%).z = scale! * objectVertices(k%).z
+        objectVertices(k%).x = scaleX! * objectVertices(k%).x
+        objectVertices(k%).y = scaleY! * objectVertices(k%).y
+        objectVertices(k%).z = scaleZ! * objectVertices(k%).z
     NEXT i%
 
 END SUB
@@ -2294,7 +2351,7 @@ OUT &H3C9, 0
 OUT &H3C9, 0
 OUT &H3C9, 0
 
-CONST palTest% = 0
+CONST palTest% = 2
 
     SELECT CASE palTest%
 
@@ -2340,9 +2397,58 @@ CONST palTest% = 0
                 OUT &H3C9, ii% \ 1
             NEXT i%
 
+        CASE 2
+            r0% = 15: g0% = 7: b0% = 31
+            r1% = 127: g1% = 63: b1% = 191
+            r2% = 255: g2% = 255: b2% = 255
+
+            FOR i% = 0 TO 3
+                k% = i% * 64
+                ii% = 12 * (i% - 2)
+                SetGradPal k%, k% + 31 + ii%, r0%, g0%, b0%, r1%, g1%, b1%
+                SetGradPal k% + 32 + ii%, k% + 63, r1%, g1%, b1%, r2%, g2%, b2%
+            NEXT i%
+
         CASE ELSE
 
     END SELECT
+
+END SUB
+
+SUB SetGradPal (c0%, c1%, r0%, g0%, b0%, r1%, g1%, b1%)
+
+    ri0% = r0% \ 4
+    gi0% = g0% \ 4
+    bi0% = b0% \ 4
+
+    ri1% = r1% \ 4
+    gi1% = g1% \ 4
+    bi1% = b1% \ 4
+
+    dc% = c1% - c0%
+    r! = ri0%: g! = gi0%: b! = bi0%
+    dr! = (ri1% - ri0%) / dc%
+    dg! = (gi1% - gi0%) / dc%
+    db! = (bi1% - bi0%) / dc%
+
+    OUT &H3C8, c0%
+
+    FOR c% = c0% TO c1%
+        IF r! < 0 THEN r! = 0
+        IF r! > 63 THEN r! = 63
+        IF g! < 0 THEN g! = 0
+        IF g! > 63 THEN g! = 63
+        IF b! < 0 THEN b! = 0
+        IF b! > 63 THEN b! = 63
+
+        OUT &H3C9, INT(r!)
+        OUT &H3C9, INT(g!)
+        OUT &H3C9, INT(b!)
+
+        r! = r! + dr!
+        g! = g! + dg!
+        b! = b! + db!
+    NEXT c%
 
 END SUB
 
