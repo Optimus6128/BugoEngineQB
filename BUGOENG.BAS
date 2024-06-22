@@ -81,8 +81,8 @@ CONST TRUE% = 1
 
 CONST PI! = 3.14159265359#
 
-CONST BENCHSECS% = 1500 ' put something high to not exit or bench or say 15 secs to run alone and exit with fps
-CONST CONTROLS% = TRUE% ' If false, auto rotate object in RunScene3D, else let the user control position/rotation
+CONST BENCHSECS% = 15 ' put something high to not exit or bench or say 15 secs to run alone and exit with fps
+CONST CONTROLS% = FALSE% ' If false, auto rotate object in RunScene3D, else let the user control position/rotation
 
 ' ---- Main Functions ----
 
@@ -173,15 +173,11 @@ DECLARE SUB PlotPixel (x%, y%, col%)
 DECLARE SUB DrawLine (x0%, y0%, x1%, y1%, c%)
 DECLARE SUB DrawPoly (i%, polyOffset%, polyIndex%, polyStyle%)
 
+DECLARE SUB CalcTriangleGrads (doGouraud%, doTextured%)
+
 DECLARE SUB PrepareEdgeListsFlat ()
 DECLARE SUB PrepareEdgeListsGouraud ()
 DECLARE SUB PrepareEdgeListsTextured ()
-
-' Experimental higher precision texture interpolators.
-' Still some saw patern in the texture but more stable.
-' Slow and might not use it, splitting a big quad in smaller surfaces works.
-DECLARE SUB PrepareEdgeListsTexturedHP ()
-DECLARE SUB DrawEdgesTexturedHP ()
 
 DECLARE SUB CalcObjectPolyLighting (obj AS Object3D, light AS Vector3D)
 DECLARE SUB CalcObjectVertexLighting (obj AS Object3D, light AS Vector3D)
@@ -262,8 +258,9 @@ vram%(6) = 320 * 8
 vram%(7) = 200
 
 CONST DivFPRASTrange% = SCRWIDTH% * FPRAST%
+CONST DivFPRASTneg% = -64 * FPRAST%
 
-DIM SHARED DivFPRAST%(0 TO DivFPRASTrange% - 1)
+DIM SHARED DivFPRAST%(DivFPRASTneg% TO DivFPRASTrange% - 1)
 
 DIM SHARED blobTex%(0 TO ENVTEXWIDTH% * ENVTEXHEIGHT% - 1)
 
@@ -319,13 +316,16 @@ DIM SHARED currentPolyNormalAdd%
 DIM SHARED currentVertexNormalAdd%
 
 DIM SHARED edgeYmin%, edgeYmax%
-DIM SHARED polyEdge(0 TO 1, 0 TO SCRHEIGHT% - 1) AS Edge
+DIM SHARED polyEdgeLeft(0 TO SCRHEIGHT% - 1) AS Edge
+DIM SHARED polyEdgeRightX%(0 TO SCRHEIGHT% - 1)
 
-DIM SHARED ex0%, ex1%, ex2%
-DIM SHARED ey0%, ey1%, ey2%
-DIM SHARED ec0%, ec1%, ec2%
-DIM SHARED eu0%, eu1%, eu2%
-DIM SHARED ev0%, ev1%, ev2%
+DIM SHARED ey%(0 TO 3)
+DIM SHARED ex%(0 TO 3)
+DIM SHARED ec%(0 TO 3)
+DIM SHARED eu%(0 TO 3)
+DIM SHARED ev%(0 TO 3)
+
+DIM SHARED gradC%, gradU%, gradV%
 
 DIM SHARED rotMat(0 TO 8) AS SINGLE
 DIM SHARED invRotMat(0 TO 8) AS SINGLE
@@ -382,16 +382,16 @@ freeMem& = FRE(-1)
 nframe& = 0
 
 
-timeElapsed! = 0
 t! = 0
 
 timeStart! = TIMER
+timeDiff! = 0
 lastTime! = timeStart!
 DO WHILE quit% = FALSE% AND timeElapsed! < BENCHSECS%
 
     IF BLURSWITCH% = 0 THEN ClearVram
 
-    HandleInput timeElapsed!
+    HandleInput timeDiff!
 
     RunScene3D (2 * t!)
 
@@ -410,8 +410,9 @@ DO WHILE quit% = FALSE% AND timeElapsed! < BENCHSECS%
     t! = t! + .01
     nframe& = nframe& + 1
 
-    timeElapsed! = TIMER - lastTime!
+    timeDiff! = TIMER - lastTime!
     lastTime! = TIMER
+    timeElapsed! = TIMER - timeStart!
 LOOP
 timeEnd! = TIMER
 
@@ -730,6 +731,25 @@ SUB CalcRotMatrix (rot AS Vector3D)
 
 END SUB
 
+SUB CalcTriangleGrads (doGouraud%, doTextured%)
+
+    dys0& = ey%(0) - ey%(2)
+    dys1& = ey%(1) - ey%(2)
+    dd& = (ex%(1) - ex%(2)) * dys0& - (ex%(0) - ex%(2)) * dys1&
+
+    IF dd& = 0 THEN EXIT SUB
+
+    IF doGouraud% = TRUE% THEN
+        gradC% = (((ec%(1) - ec%(2)) * dys0& - (ec%(0) - ec%(2)) * dys1&) * FPRAST%) \ dd&
+    END IF
+
+    IF doTextured% = TRUE% THEN
+        gradU% = (((eu%(1) - eu%(2)) * dys0& - (eu%(0) - eu%(2)) * dys1&) * FPRAST%) \ dd&
+        gradV% = (((ev%(1) - ev%(2)) * dys0& - (ev%(0) - ev%(2)) * dys1&) * FPRAST%) \ dd&
+    END IF
+
+END SUB
+
 SUB CenterObjectVertices (obj AS Object3D)
 
     offset% = obj.verticesOffset
@@ -829,8 +849,8 @@ SUB DrawEdgesFlat (col%)
 
     yEnd% = edgeYmax% - 1 ' one less edge bottom to avoid overdraw
     FOR y% = edgeYmin% TO yEnd%
-        xs0% = polyEdge(0, y%).x
-        xs1% = polyEdge(1, y%).x
+        xs0% = polyEdgeLeft(y%).x
+        xs1% = polyEdgeRightX%(y%)
 
         IF xs0% < 0 THEN xs0% = 0
         IF xs1% > FPRAST% * (SCRWIDTH% - 1) THEN xs1% = FPRAST% * (SCRWIDTH% - 1)
@@ -879,19 +899,15 @@ SUB DrawEdgesGouraud (col%)
 
     yEnd% = edgeYmax% - 1 ' one less edge bottom to avoid overdraw
     FOR y% = edgeYmin% TO yEnd%
-        xs0% = polyEdge(0, y%).x
-        xs1% = polyEdge(1, y%).x
+        xs0% = polyEdgeLeft(y%).x
+        xs1% = polyEdgeRightX%(y%)
 
         IF xs1% >= xs0% THEN
             IF xs0% >= 0 OR xs1% >= 0 THEN
-                c0% = col% + polyEdge(0, y%).c
-                c1% = col% + polyEdge(1, y%).c
-
-                dx% = DivFPRAST%(xs1% - xs0%)
-                IF dx% <> 0 THEN dc% = (c1% - c0%) \ dx%
+                c0% = col% + polyEdgeLeft(y%).c
 
                 IF xs0% < 0 THEN
-                    c0% = c0% + DivFPRAST%(-xs0%) * dc%
+                    c0% = c0% + DivFPRAST%(-xs0%) * gradC%
                     xs0% = 0
                 END IF
 
@@ -903,9 +919,9 @@ SUB DrawEdgesGouraud (col%)
                     xs0% = DivFPRAST%(xs0%)
                     xs1% = DivFPRAST%(xs1%)
 
-                    FOR x% = xs0% TO xs1% - 1       ' one less pixel to avoid edge overdraw
+                    FOR x% = xs0% TO xs1% - 1     ' one less pixel to avoid edge overdraw
                         POKE x%, DivFPRAST%(c0%)
-                        c0% = c0% + dc%
+                        c0% = c0% + gradC%
                     NEXT x%
 
                 END IF
@@ -924,25 +940,17 @@ SUB DrawEdgesTextured (col%)
 
     yEnd% = edgeYmax% - 1 ' one less edge bottom to avoid overdraw
     FOR y% = edgeYmin% TO yEnd%
-        xs0% = polyEdge(0, y%).x
-        xs1% = polyEdge(1, y%).x
+        xs0% = polyEdgeLeft(y%).x
+        xs1% = polyEdgeRightX%(y%)
 
         IF xs1% >= xs0% THEN
             IF xs0% >= 0 OR xs1% >= 0 THEN
-                u0% = polyEdge(0, y%).u
-                u1% = polyEdge(1, y%).u
-                v0% = polyEdge(0, y%).v
-                v1% = polyEdge(1, y%).v
-
-                dx% = DivFPRAST%(xs1% - xs0%)
-                IF dx% <> 0 THEN
-                    du% = (u1% - u0%) \ dx%
-                    dv% = (v1% - v0%) \ dx%
-                END IF
+                u0% = polyEdgeLeft(y%).u
+                v0% = polyEdgeLeft(y%).v
 
                 IF xs0% < 0 THEN
-                    u0% = u0% + DivFPRAST%(-xs0%) * du%
-                    v0% = v0% + DivFPRAST%(-xs0%) * dv%
+                    u0% = u0% + DivFPRAST%(-xs0%) * gradU%
+                    v0% = v0% + DivFPRAST%(-xs0%) * gradV%
                     xs0% = 0
                 END IF
 
@@ -958,50 +966,12 @@ SUB DrawEdgesTextured (col%)
                         u% = DivFPRAST%(u0%)
                         v% = DivFPRAST%(v0%)
                         POKE x%, col% + blobTex%(((v% AND (ENVTEXHEIGHT% - 1)) * ENVTEXWIDTH%) + (u% AND (ENVTEXWIDTH% - 1)))
-                        u0% = u0% + du%
-                        v0% = v0% + dv%
+                        u0% = u0% + gradU%
+                        v0% = v0% + gradV%
                     NEXT x%
 
                 END IF
             END IF
-        END IF
-
-        ys% = ys% + (SCRWIDTH% \ 16)
-    NEXT y%
-
-END SUB
-
-SUB DrawEdgesTexturedHP
-
-    screenSeg& = VARSEG(vram%(0)) + 1
-    ys% = edgeYmin% * (SCRWIDTH% \ 16)
-
-    yEnd% = edgeYmax% - 1 ' one less edge bottom to avoid overdraw
-    FOR y% = edgeYmin% TO yEnd%
-        xs0% = polyEdge(0, y%).x
-        xs1% = polyEdge(1, y%).x - 1 ' one less pixel right to avoid overdraw
-
-        u0& = polyEdge(0, y%).u * LFPRAST&: u1& = polyEdge(1, y%).u * LFPRAST&
-        v0& = polyEdge(0, y%).v * LFPRAST&: v1& = polyEdge(1, y%).v * LFPRAST&
-        IF xs1% > xs0% THEN
-            du& = (u1& - u0&) \ (xs1% - xs0%)
-            dv& = (v1& - v0&) \ (xs1% - xs0%)
-        END IF
-
-        IF xs0% < 0 THEN xs0% = 0
-        IF xs1% > SCRWIDTH% - 1 THEN xs1% = SCRWIDTH% - 1
-
-        IF xs1% >= xs0% THEN
-            DEF SEG = screenSeg& + ys%
-
-            FOR x% = xs0% TO xs1%
-                u% = u0& \ LFPRAST&
-                v% = v0& \ LFPRAST&
-                POKE x%, u% XOR v%
-                u0& = u0& + du&
-                v0& = v0& + dv&
-            NEXT x%
-
         END IF
 
         ys% = ys% + (SCRWIDTH% \ 16)
@@ -1052,32 +1022,32 @@ SUB DrawPoly (i%, polyOffset%, polyIndex%, polyStyle%)
     i1% = objectPolyIndices%(i% + 1)
     i2% = objectPolyIndices%(i% + 2)
 
-    ex0% = screenVertices(i0%).x
-    ex1% = screenVertices(i1%).x
-    ex2% = screenVertices(i2%).x
-    ey0% = screenVertices(i0%).y \ FPRAST%
-    ey1% = screenVertices(i1%).y \ FPRAST%
-    ey2% = screenVertices(i2%).y \ FPRAST%
+    ex%(0) = screenVertices(i0%).x
+    ex%(1) = screenVertices(i1%).x
+    ex%(2) = screenVertices(i2%).x
+    ey%(0) = screenVertices(i0%).y \ FPRAST%
+    ey%(1) = screenVertices(i1%).y \ FPRAST%
+    ey%(2) = screenVertices(i2%).y \ FPRAST%
 
     IF polyStyle% = polyStyleGouraud% THEN
-        ec0% = screenVertices(i0%).c
-        ec1% = screenVertices(i1%).c
-        ec2% = screenVertices(i2%).c
+        ec%(0) = screenVertices(i0%).c
+        ec%(1) = screenVertices(i1%).c
+        ec%(2) = screenVertices(i2%).c
     END IF
 
     IF polyStyle% = polyStyleTextured% THEN
-        eu0% = screenVertices(i0%).u
-        eu1% = screenVertices(i1%).u
-        eu2% = screenVertices(i2%).u
-        ev0% = screenVertices(i0%).v
-        ev1% = screenVertices(i1%).v
-        ev2% = screenVertices(i2%).v
+        eu%(0) = screenVertices(i0%).u
+        eu%(1) = screenVertices(i1%).u
+        eu%(2) = screenVertices(i2%).u
+        ev%(0) = screenVertices(i0%).v
+        ev%(1) = screenVertices(i1%).v
+        ev%(2) = screenVertices(i2%).v
     END IF
 
-    min% = ey0%
+    min% = ey%(0)
     max% = min%
-    IF ey1% < min% THEN min% = ey1% ELSE IF ey1% > max% THEN max% = ey1%
-    IF ey2% < min% THEN min% = ey2% ELSE IF ey2% > max% THEN max% = ey2%
+    IF ey%(1) < min% THEN min% = ey%(1) ELSE IF ey%(1) > max% THEN max% = ey%(1)
+    IF ey%(2) < min% THEN min% = ey%(2) ELSE IF ey%(2) > max% THEN max% = ey%(2)
     edgeYmin% = min%
     edgeYmax% = max%
 
@@ -1097,10 +1067,12 @@ SUB DrawPoly (i%, polyOffset%, polyIndex%, polyStyle%)
 
             CASE polyStyleGouraud%
                 PrepareEdgeListsGouraud
+                CalcTriangleGrads TRUE%, FALSE%
                 DrawEdgesGouraud col%
 
             CASE polyStyleTextured%
                 PrepareEdgeListsTextured
+                CalcTriangleGrads FALSE%, TRUE%
                 DrawEdgesTextured col%
 
             CASE ELSE
@@ -1418,8 +1390,12 @@ SUB InitPrecalcs
 
 ' LUT to divide by FPRAST% as qbasic doesn't convert integer division by power of two to shifts
 
-    FOR i% = 0 TO DivFPRASTrange% - 1
-        DivFPRAST%(i%) = i% \ FPRAST%
+    FOR i% = DivFPRASTneg% TO DivFPRASTrange% - 1
+        IF i% > 0 THEN
+            DivFPRAST%(i%) = i% \ FPRAST%
+        ELSE
+            DivFPRAST%(i%) = 0
+        END IF
     NEXT i%
 
 ' Some materials
@@ -1704,377 +1680,131 @@ END SUB
 
 SUB PrepareEdgeListsFlat
 
-    IF ey0% <> ey1% THEN
+    FOR n% = 0 TO 2
+        i0% = n%: i1% = n% + 1
+        IF i1% = 3 THEN i1% = 0
 
-        IF (ey0% < ey1%) THEN
-            edgeIndex% = 0
-            xs0% = ex0%: ys0% = ey0%
-            xs1% = ex1%: ys1% = ey1%
-        ELSE
-            edgeIndex% = 1
-            xs0% = ex1%: ys0% = ey1%
-            xs1% = ex0%: ys1% = ey0%
-        END IF
+        ys0% = ey%(i0%): ys1% = ey%(i1%)
 
-        dy% = ys1% - ys0%
-        dx% = (xs1% - xs0%) \ dy%
-
-        FOR y% = ys0% TO ys1% - 1
-            IF y% >= 0 AND y% < SCRHEIGHT% THEN
-                polyEdge(edgeIndex%, y%).x = xs0%
+        IF ys0% <> ys1% THEN
+            IF (ys0% < ys1%) THEN
+                isEdgeLeft% = TRUE%
+                xs0% = ex%(i0%)
+                xs1% = ex%(i1%)
+            ELSE
+                isEdgeLeft% = FALSE%
+                SWAP ys0%, ys1%
+                xs0% = ex%(i1%)
+                xs1% = ex%(i0%)
             END IF
-            xs0% = xs0% + dx%
-        NEXT y%
 
-    END IF
+            dy% = ys1% - ys0%
+            dx% = (xs1% - xs0%) \ dy%
 
-    IF ey1% <> ey2% THEN
-
-        IF (ey1% < ey2%) THEN
-            edgeIndex% = 0
-            xs0% = ex1%: ys0% = ey1%
-            xs1% = ex2%: ys1% = ey2%
-        ELSE
-            edgeIndex% = 1
-            xs0% = ex2%: ys0% = ey2%
-            xs1% = ex1%: ys1% = ey1%
-        END IF
-
-        dy% = ys1% - ys0%
-        dx% = (xs1% - xs0%) \ dy%
-
-        FOR y% = ys0% TO ys1% - 1
-            IF y% >= 0 AND y% < SCRHEIGHT% THEN
-                polyEdge(edgeIndex%, y%).x = xs0%
+            IF isEdgeLeft% = TRUE THEN
+                FOR y% = ys0% TO ys1% - 1
+                    IF y% >= 0 AND y% < SCRHEIGHT% THEN
+                        polyEdgeLeft(y%).x = xs0%
+                    END IF
+                    xs0% = xs0% + dx%
+                NEXT y%
+            ELSE
+                FOR y% = ys0% TO ys1% - 1
+                    IF y% >= 0 AND y% < SCRHEIGHT% THEN
+                        polyEdgeRightX%(y%) = xs0%
+                    END IF
+                    xs0% = xs0% + dx%
+                NEXT y%
             END IF
-            xs0% = xs0% + dx%
-        NEXT y%
 
-    END IF
-
-    IF ey2% <> ey0% THEN
-
-        IF (ey2% < ey0%) THEN
-            edgeIndex% = 0
-            xs0% = ex2%: ys0% = ey2%
-            xs1% = ex0%: ys1% = ey0%
-        ELSE
-            edgeIndex% = 1
-            xs0% = ex0%: ys0% = ey0%
-            xs1% = ex2%: ys1% = ey2%
         END IF
-
-        dy% = ys1% - ys0%
-        dx% = (xs1% - xs0%) \ dy%
-
-        FOR y% = ys0% TO ys1% - 1
-            IF y% >= 0 AND y% < SCRHEIGHT% THEN
-                polyEdge(edgeIndex%, y%).x = xs0%
-            END IF
-            xs0% = xs0% + dx%
-        NEXT y%
-
-    END IF
+    NEXT n%
 
 END SUB
 
 SUB PrepareEdgeListsGouraud
 
-    IF ey0% <> ey1% THEN
+    FOR n% = 0 TO 2
+        i0% = n%: i1% = n% + 1
+        IF i1% = 3 THEN i1% = 0
 
-        IF (ey0% < ey1%) THEN
-            edgeIndex% = 0
-            xs0% = ex0%: ys0% = ey0%: cs0% = ec0%
-            xs1% = ex1%: ys1% = ey1%: cs1% = ec1%
-        ELSE
-            edgeIndex% = 1
-            xs0% = ex1%: ys0% = ey1%: cs0% = ec1%
-            xs1% = ex0%: ys1% = ey0%: cs1% = ec0%
-        END IF
+        ys0% = ey%(i0%): ys1% = ey%(i1%)
 
-        dy% = ys1% - ys0%
-        dx% = (xs1% - xs0%) \ dy%
-        dc% = (cs1% - cs0%) \ dy%
+        IF ys0% <> ys1% THEN
+            IF (ys0% < ys1%) THEN
+                xs0% = ex%(i0%): cs0% = ec%(i0%)
 
-        FOR y% = ys0% TO ys1% - 1
-            IF y% >= 0 AND y% < SCRHEIGHT% THEN
-                polyEdge(edgeIndex%, y%).x = xs0%
-                polyEdge(edgeIndex%, y%).c = cs0%
+                dy% = ys1% - ys0%
+                dx% = (ex%(i1%) - xs0%) \ dy%
+                dc% = (ec%(i1%) - cs0%) \ dy%
+
+                FOR y% = ys0% TO ys1% - 1
+                    IF y% >= 0 AND y% < SCRHEIGHT% THEN
+                        polyEdgeLeft(y%).x = xs0%
+                        polyEdgeLeft(y%).c = cs0%
+                    END IF
+                    xs0% = xs0% + dx%
+                    cs0% = cs0% + dc%
+                NEXT y%
+            ELSE
+                xs0% = ex%(i1%)
+                dx% = (ex%(i0%) - xs0%) \ (ys0% - ys1%)
+
+                FOR y% = ys1% TO ys0% - 1
+                    IF y% >= 0 AND y% < SCRHEIGHT% THEN
+                        polyEdgeRightX%(y%) = xs0%
+                    END IF
+                    xs0% = xs0% + dx%
+                NEXT y%
             END IF
-            xs0% = xs0% + dx%
-            cs0% = cs0% + dc%
-        NEXT y%
-
-    END IF
-
-
-    IF ey1% <> ey2% THEN
-
-        IF (ey1% < ey2%) THEN
-            edgeIndex% = 0
-            xs0% = ex1%: ys0% = ey1%: cs0% = ec1%
-            xs1% = ex2%: ys1% = ey2%: cs1% = ec2%
-        ELSE
-            edgeIndex% = 1
-            xs0% = ex2%: ys0% = ey2%: cs0% = ec2%
-            xs1% = ex1%: ys1% = ey1%: cs1% = ec1%
+       
         END IF
-
-        dy% = ys1% - ys0%
-        dx% = (xs1% - xs0%) \ dy%
-        dc% = (cs1% - cs0%) \ dy%
-
-        FOR y% = ys0% TO ys1% - 1
-            IF y% >= 0 AND y% < SCRHEIGHT% THEN
-                polyEdge(edgeIndex%, y%).x = xs0%
-                polyEdge(edgeIndex%, y%).c = cs0%
-            END IF
-            xs0% = xs0% + dx%
-            cs0% = cs0% + dc%
-        NEXT y%
-
-    END IF
-
-
-    IF ey2% <> ey0% THEN
-
-        IF (ey2% < ey0%) THEN
-            edgeIndex% = 0
-            xs0% = ex2%: ys0% = ey2%: cs0% = ec2%
-            xs1% = ex0%: ys1% = ey0%: cs1% = ec0%
-        ELSE
-            edgeIndex% = 1
-            xs0% = ex0%: ys0% = ey0%: cs0% = ec0%
-            xs1% = ex2%: ys1% = ey2%: cs1% = ec2%
-        END IF
-
-        dy% = ys1% - ys0%
-        dx% = (xs1% - xs0%) \ dy%
-        dc% = (cs1% - cs0%) \ dy%
-
-        FOR y% = ys0% TO ys1% - 1
-            IF y% >= 0 AND y% < SCRHEIGHT% THEN
-                polyEdge(edgeIndex%, y%).x = xs0%
-                polyEdge(edgeIndex%, y%).c = cs0%
-            END IF
-            xs0% = xs0% + dx%
-            cs0% = cs0% + dc%
-        NEXT y%
-
-    END IF
+    NEXT n%
 
 END SUB
 
 SUB PrepareEdgeListsTextured
 
-    IF ey0% <> ey1% THEN
+    FOR n% = 0 TO 2
+        i0% = n%: i1% = n% + 1
+        IF i1% = 3 THEN i1% = 0
 
-        IF (ey0% < ey1%) THEN
-            edgeIndex% = 0
-            xs0% = ex0%: ys0% = ey0%: us0% = eu0%: vs0% = ev0%
-            xs1% = ex1%: ys1% = ey1%: us1% = eu1%: vs1% = ev1%
-        ELSE
-            edgeIndex% = 1
-            xs0% = ex1%: ys0% = ey1%: us0% = eu1%: vs0% = ev1%
-            xs1% = ex0%: ys1% = ey0%: us1% = eu0%: vs1% = ev0%
-        END IF
+        ys0% = ey%(i0%): ys1% = ey%(i1%)
 
-        dy% = ys1% - ys0%
-        dx% = (xs1% - xs0%) \ dy%
-        du% = (us1% - us0%) \ dy%
-        dv% = (vs1% - vs0%) \ dy%
+        IF ys0% <> ys1% THEN
+            IF (ys0% < ys1%) THEN
+                xs0% = ex%(i0%): us0% = eu%(i0%): vs0% = ev%(i0%)
 
-        FOR y% = ys0% TO ys1% - 1
-            IF y% >= 0 AND y% < SCRHEIGHT% THEN
-                polyEdge(edgeIndex%, y%).x = xs0%
-                polyEdge(edgeIndex%, y%).u = us0%
-                polyEdge(edgeIndex%, y%).v = vs0%
+                dy% = ys1% - ys0%
+                dx% = (ex%(i1%) - xs0%) \ dy%
+                du% = (eu%(i1%) - us0%) \ dy%
+                dv% = (ev%(i1%) - vs0%) \ dy%
+
+                FOR y% = ys0% TO ys1% - 1
+                    IF y% >= 0 AND y% < SCRHEIGHT% THEN
+                        polyEdgeLeft(y%).x = xs0%
+                        polyEdgeLeft(y%).u = us0%
+                        polyEdgeLeft(y%).v = vs0%
+                    END IF
+                    xs0% = xs0% + dx%
+                    us0% = us0% + du%
+                    vs0% = vs0% + dv%
+                NEXT y%
+
+            ELSE
+                xs0% = ex%(i1%)
+                dx% = (ex%(i0%) - xs0%) \ (ys0% - ys1%)
+
+                FOR y% = ys1% TO ys0% - 1
+                    IF y% >= 0 AND y% < SCRHEIGHT% THEN
+                        polyEdgeRightX%(y%) = xs0%
+                    END IF
+                    xs0% = xs0% + dx%
+                NEXT y%
             END IF
-            xs0% = xs0% + dx%
-            us0% = us0% + du%
-            vs0% = vs0% + dv%
-        NEXT y%
 
-    END IF
-
-
-    IF ey1% <> ey2% THEN
-
-        IF (ey1% < ey2%) THEN
-            edgeIndex% = 0
-            xs0% = ex1%: ys0% = ey1%: us0% = eu1%: vs0% = ev1%
-            xs1% = ex2%: ys1% = ey2%: us1% = eu2%: vs1% = ev2%
-        ELSE
-            edgeIndex% = 1
-            xs0% = ex2%: ys0% = ey2%: us0% = eu2%: vs0% = ev2%
-            xs1% = ex1%: ys1% = ey1%: us1% = eu1%: vs1% = ev1%
         END IF
-
-        dy% = ys1% - ys0%
-        dx% = (xs1% - xs0%) \ dy%
-        du% = (us1% - us0%) \ dy%
-        dv% = (vs1% - vs0%) \ dy%
-
-        FOR y% = ys0% TO ys1% - 1
-            IF y% >= 0 AND y% < SCRHEIGHT% THEN
-                polyEdge(edgeIndex%, y%).x = xs0%
-                polyEdge(edgeIndex%, y%).u = us0%
-                polyEdge(edgeIndex%, y%).v = vs0%
-            END IF
-            xs0% = xs0% + dx%
-            us0% = us0% + du%
-            vs0% = vs0% + dv%
-        NEXT y%
-
-    END IF
-
-
-    IF ey2% <> ey0% THEN
-
-        IF (ey2% < ey0%) THEN
-            edgeIndex% = 0
-            xs0% = ex2%: ys0% = ey2%: us0% = eu2%: vs0% = ev2%
-            xs1% = ex0%: ys1% = ey0%: us1% = eu0%: vs1% = ev0%
-        ELSE
-            edgeIndex% = 1
-            xs0% = ex0%: ys0% = ey0%: us0% = eu0%: vs0% = ev0%
-            xs1% = ex2%: ys1% = ey2%: us1% = eu2%: vs1% = ev2%
-        END IF
-
-        dy% = ys1% - ys0%
-        dx% = (xs1% - xs0%) \ dy%
-        du% = (us1% - us0%) \ dy%
-        dv% = (vs1% - vs0%) \ dy%
-
-        FOR y% = ys0% TO ys1% - 1
-            IF y% >= 0 AND y% < SCRHEIGHT% THEN
-                polyEdge(edgeIndex%, y%).x = xs0%
-                polyEdge(edgeIndex%, y%).u = us0%
-                polyEdge(edgeIndex%, y%).v = vs0%
-            END IF
-            xs0% = xs0% + dx%
-            us0% = us0% + du%
-            vs0% = vs0% + dv%
-        NEXT y%
-
-    END IF
-
-END SUB
-
-SUB PrepareEdgeListsTexturedHP
-
-    IF ey0% <> ey1% THEN
-
-        IF (ey0% < ey1%) THEN
-            edgeIndex% = 0
-            xs0% = ex0%: ys0% = ey0%: us0% = eu0%: vs0% = ev0%
-            xs1% = ex1%: ys1% = ey1%: us1% = eu1%: vs1% = ev1%
-        ELSE
-            edgeIndex% = 1
-            xs0% = ex1%: ys0% = ey1%: us0% = eu1%: vs0% = ev1%
-            xs1% = ex0%: ys1% = ey0%: us1% = eu0%: vs1% = ev0%
-        END IF
-
-        hxs0& = xs0% * LFPRAST&
-        hxs1& = xs1% * LFPRAST&
-        hus0& = us0% * LFPRAST&
-        hus1& = us1% * LFPRAST&
-        hvs0& = vs0% * LFPRAST&
-        hvs1& = vs1% * LFPRAST&
-
-        dy% = ys1% - ys0%
-        dx& = (hxs1& - hxs0&) \ dy%
-        du& = (hus1& - hus0&) \ dy%
-        dv& = (hvs1& - hvs0&) \ dy%
-
-        FOR y% = ys0% TO ys1% - 1
-            IF y% >= 0 AND y% < SCRHEIGHT% THEN
-                polyEdge(edgeIndex%, y%).x = hxs0& \ LFPRAST&
-                polyEdge(edgeIndex%, y%).u = hus0& \ LFPRAST&
-                polyEdge(edgeIndex%, y%).v = hvs0& \ LFPRAST&
-            END IF
-            hxs0& = hxs0& + dx&
-            hus0& = hus0& + du&
-            hvs0& = hvs0& + dv&
-        NEXT y%
-
-    END IF
-
-
-    IF ey1% <> ey2% THEN
-
-        IF (ey1% < ey2%) THEN
-            edgeIndex% = 0
-            xs0% = ex1%: ys0% = ey1%: us0% = eu1%: vs0% = ev1%
-            xs1% = ex2%: ys1% = ey2%: us1% = eu2%: vs1% = ev2%
-        ELSE
-            edgeIndex% = 1
-            xs0% = ex2%: ys0% = ey2%: us0% = eu2%: vs0% = ev2%
-            xs1% = ex1%: ys1% = ey1%: us1% = eu1%: vs1% = ev1%
-        END IF
-
-        hxs0& = xs0% * LFPRAST&
-        hxs1& = xs1% * LFPRAST&
-        hus0& = us0% * LFPRAST&
-        hus1& = us1% * LFPRAST&
-        hvs0& = vs0% * LFPRAST&
-        hvs1& = vs1% * LFPRAST&
-
-        dy% = ys1% - ys0%
-        dx& = (hxs1& - hxs0&) \ dy%
-        du& = (hus1& - hus0&) \ dy%
-        dv& = (hvs1& - hvs0&) \ dy%
-
-        FOR y% = ys0% TO ys1% - 1
-            IF y% >= 0 AND y% < SCRHEIGHT% THEN
-                polyEdge(edgeIndex%, y%).x = hxs0& \ LFPRAST&
-                polyEdge(edgeIndex%, y%).u = hus0& \ LFPRAST&
-                polyEdge(edgeIndex%, y%).v = hvs0& \ LFPRAST&
-            END IF
-            hxs0& = hxs0& + dx&
-            hus0& = hus0& + du&
-            hvs0& = hvs0& + dv&
-        NEXT y%
-
-    END IF
-
-
-    IF ey2% <> ey0% THEN
-
-        IF (ey2% < ey0%) THEN
-            edgeIndex% = 0
-            xs0% = ex2%: ys0% = ey2%: us0% = eu2%: vs0% = ev2%
-            xs1% = ex0%: ys1% = ey0%: us1% = eu0%: vs1% = ev0%
-        ELSE
-            edgeIndex% = 1
-            xs0% = ex0%: ys0% = ey0%: us0% = eu0%: vs0% = ev0%
-            xs1% = ex2%: ys1% = ey2%: us1% = eu2%: vs1% = ev2%
-        END IF
-
-        hxs0& = xs0% * LFPRAST&
-        hxs1& = xs1% * LFPRAST&
-        hus0& = us0% * LFPRAST&
-        hus1& = us1% * LFPRAST&
-        hvs0& = vs0% * LFPRAST&
-        hvs1& = vs1% * LFPRAST&
-
-        dy% = ys1% - ys0%
-        dx& = (hxs1& - hxs0&) \ dy%
-        du& = (hus1& - hus0&) \ dy%
-        dv& = (hvs1& - hvs0&) \ dy%
-
-        FOR y% = ys0% TO ys1% - 1
-            IF y% >= 0 AND y% < SCRHEIGHT% THEN
-                polyEdge(edgeIndex%, y%).x = hxs0& \ LFPRAST&
-                polyEdge(edgeIndex%, y%).u = hus0& \ LFPRAST&
-                polyEdge(edgeIndex%, y%).v = hvs0& \ LFPRAST&
-            END IF
-            hxs0& = hxs0& + dx&
-            hus0& = hus0& + du&
-            hvs0& = hvs0& + dv&
-        NEXT y%
-
-    END IF
+    NEXT n%
 
 END SUB
 
@@ -2517,19 +2247,19 @@ SUB SortObject3Dpoly (obj AS Object3D)
         z2% = screenVertices(i2%).z
 
         IF z0% > 0 AND z1% > 0 AND z2% > 0 THEN
-            x0% = screenVertices(i0%).x
-            x1% = screenVertices(i1%).x
-            x2% = screenVertices(i2%).x
-            y0% = screenVertices(i0%).y
-            y1% = screenVertices(i1%).y
-            y2% = screenVertices(i2%).y
+            x0& = screenVertices(i0%).x
+            x1& = screenVertices(i1%).x
+            x2& = screenVertices(i2%).x
+            y0& = screenVertices(i0%).y
+            y1& = screenVertices(i1%).y
+            y2& = screenVertices(i2%).y
 
             ' Will need to investigate if it affects performance that I use LONG INT to avoid certain overflows
             ' If polygon numbers are too little, problaby not affecting much
-            dx0& = x0% - x1%
-            dy0& = y2% - y1%
-            dx1& = x2% - x1%
-            dy1& = y0% - y1%
+            dx0& = x0& - x1&
+            dy0& = y2& - y1&
+            dx1& = x2& - x1&
+            dy1& = y0& - y1&
             a& = dx0& * dy0& - dx1& * dy1&
             IF a& >= 0 THEN
                 zIndex% = (z0% + z1% + z2%) \ (3 * ZBUCKETSIZE%)
@@ -2582,16 +2312,16 @@ SUB TransformObject3D (obj AS Object3D)
         yo! = objectVertices(k%).y
         zo! = objectVertices(k%).z
 
-        z! = xo! * rotMat(2) + yo! * rotMat(5) + zo! * rotMat(8)
+        z! = xo! * rotMat(2) + yo! * rotMat(5) + zo! * rotMat(8) + posZ!
 
-        zi% = INT(z! + posZ!)
+        zi% = INT(z!)
         screenVertices(i%).z = zi%
         IF zi% > 0 THEN
             x! = xo! * rotMat(0) + yo! * rotMat(3) + zo! * rotMat(6)
             y! = xo! * rotMat(1) + yo! * rotMat(4) + zo! * rotMat(7)
 
-            screenVertices(i%).x = SCRWIDTH2% * FPRAST% + INT((x! + posX!) * PROJ!) \ zi%
-            screenVertices(i%).y = SCRHEIGHT2% * FPRAST% - INT((y! + posY!) * PROJ!) \ zi%
+            screenVertices(i%).x = SCRWIDTH2% * FPRAST% + INT(((x! + posX!) * PROJ!) / z!)
+            screenVertices(i%).y = SCRHEIGHT2% * FPRAST% - INT(((y! + posY!) * PROJ!) / z!)
         END IF
 
     NEXT i%
