@@ -1,3 +1,4 @@
+DECLARE SUB GenEnvmapTex (num%)
 TYPE Vertex3D
     x AS INTEGER
     y AS INTEGER
@@ -38,9 +39,7 @@ TYPE Range3D
 END TYPE
 
 TYPE PolyMaterial
-    ambient AS INTEGER
-    diffuse AS INTEGER
-    specular AS INTEGER
+    baseColor AS INTEGER
 END TYPE
 
 TYPE Object3D
@@ -81,8 +80,8 @@ CONST TRUE% = 1
 
 CONST PI! = 3.14159265359#
 
-CONST BENCHSECS% = 15 ' put something high to not exit or bench or say 15 secs to run alone and exit with fps
-CONST CONTROLS% = FALSE% ' If false, auto rotate object in RunScene3D, else let the user control position/rotation
+CONST BENCHSECS% = 1500 ' put something high to not exit or bench or say 15 secs to run alone and exit with fps
+CONST CONTROLS% = TRUE% ' If false, auto rotate object in RunScene3D, else let the user control position/rotation
 
 ' ---- Main Functions ----
 
@@ -149,7 +148,6 @@ DECLARE SUB ScaleObjectVertices (obj AS Object3D, scaleX!, scaleY!, scaleZ!)
 DECLARE SUB CenterObjectVertices (obj AS Object3D)
 DECLARE SUB FlipPolygonOrientation (obj AS Object3D)
 
-DECLARE SUB SetMaterial (a%, d%, s%, mat AS PolyMaterial)
 DECLARE SUB ChangeObjectPolyMaterials (obj AS Object3D, matIndex%)
 
 ' ---- Object loading functions ----
@@ -178,6 +176,7 @@ DECLARE SUB CalcTriangleGrads (doGouraud%, doTextured%)
 DECLARE SUB PrepareEdgeListsFlat ()
 DECLARE SUB PrepareEdgeListsGouraud ()
 DECLARE SUB PrepareEdgeListsTextured ()
+DECLARE SUB PrepareEdgeListsTexturedGouraud ()
 
 DECLARE SUB CalcObjectPolyLighting (obj AS Object3D, light AS Vector3D)
 DECLARE SUB CalcObjectVertexLighting (obj AS Object3D, light AS Vector3D)
@@ -188,7 +187,7 @@ DECLARE SUB CalcObjectEnvmapTC (obj AS Object3D)
 DECLARE SUB DrawEdgesFlat (col%)
 DECLARE SUB DrawEdgesGouraud (col%)
 DECLARE SUB DrawEdgesTextured (col%)
-
+DECLARE SUB DrawEdgesTexturedGouraud (col%)
 
 
 ' ---- Object transformation functions ----
@@ -225,6 +224,7 @@ CONST renderTypePoly% = 2
 CONST polyStyleFlat% = 0
 CONST polyStyleGouraud% = 1
 CONST polyStyleTextured% = 2
+CONST polyStyleTexturedGouraud% = 3
 
 CONST ZBUCKETSIZE% = 16
 CONST ZBUCKETMAX% = 2048
@@ -235,6 +235,10 @@ CONST LEFTOVERSSIZE% = 512
 ' Some default values for now
 CONST ENVTEXWIDTH% = 128
 CONST ENVTEXHEIGHT% = 128
+
+CONST MATERIALWIDTH% = 64
+CONST DIFFUSEWIDTH% = 2 * MATERIALWIDTH% \ 4
+CONST SPECULARWIDTH% = MATERIALWIDTH% - DIFFUSEWIDTH%
 
 
 ' ---- Zbucket arrays ----
@@ -637,7 +641,7 @@ SUB CalcObjectVertexLighting (obj AS Object3D, light AS Vector3D)
         IF d% < 0 THEN d% = 0
         IF d% > FPNORM% THEN d% = FPNORM%
 
-        screenVertices(i%).c = (63 * d%) * (FPRAST% \ FPNORM%)
+        screenVertices(i%).c = ((DIFFUSEWIDTH% - 1) * d%) * (FPRAST% \ FPNORM%)
     NEXT i%
 
 END SUB
@@ -979,6 +983,56 @@ SUB DrawEdgesTextured (col%)
 
 END SUB
 
+SUB DrawEdgesTexturedGouraud (col%)
+
+    screenSeg& = VARSEG(vram%(0)) + 1
+    ys% = edgeYmin% * (SCRWIDTH% \ 16)
+
+    yEnd% = edgeYmax% - 1 ' one less edge bottom to avoid overdraw
+    FOR y% = edgeYmin% TO yEnd%
+        xs0% = polyEdgeLeft(y%).x
+        xs1% = polyEdgeRightX%(y%)
+
+        IF xs1% >= xs0% THEN
+            IF xs0% >= 0 OR xs1% >= 0 THEN
+                c0% = polyEdgeLeft(y%).c
+
+                u0% = polyEdgeLeft(y%).u
+                v0% = polyEdgeLeft(y%).v
+
+                IF xs0% < 0 THEN
+                    c0% = c0% + DivFPRAST%(-xs0%) * gradC%
+                    u0% = u0% + DivFPRAST%(-xs0%) * gradU%
+                    v0% = v0% + DivFPRAST%(-xs0%) * gradV%
+                    xs0% = 0
+                END IF
+
+                IF xs1% > FPRAST% * (SCRWIDTH% - 1) THEN xs1% = FPRAST% * (SCRWIDTH% - 1)
+
+                IF xs1% >= xs0% THEN
+                    DEF SEG = screenSeg& + ys%
+
+                    xs0% = DivFPRAST%(xs0%)
+                    xs1% = DivFPRAST%(xs1%)
+
+                    FOR x% = xs0% TO xs1% - 1       ' one less pixel to avoid edge overdraw
+                        u% = DivFPRAST%(u0%)
+                        v% = DivFPRAST%(v0%)
+                        POKE x%, col% + DivFPRAST%(c0%) + blobTex%(((v% AND (ENVTEXHEIGHT% - 1)) * ENVTEXWIDTH%) + (u% AND (ENVTEXWIDTH% - 1)))
+                        c0% = c0% + gradC%
+                        u0% = u0% + gradU%
+                        v0% = v0% + gradV%
+                    NEXT x%
+
+                END IF
+            END IF
+        END IF
+
+        ys% = ys% + (SCRWIDTH% \ 16)
+    NEXT y%
+
+END SUB
+
 SUB DrawLine (x0%, y0%, x1%, y1%, c%)
 
     screenSeg& = VARSEG(vram%(0)) + 1
@@ -1029,13 +1083,13 @@ SUB DrawPoly (i%, polyOffset%, polyIndex%, polyStyle%)
     ey%(1) = screenVertices(i1%).y \ FPRAST%
     ey%(2) = screenVertices(i2%).y \ FPRAST%
 
-    IF polyStyle% = polyStyleGouraud% THEN
+    IF polyStyle% AND polyStyleGouraud% <> 0 THEN
         ec%(0) = screenVertices(i0%).c
         ec%(1) = screenVertices(i1%).c
         ec%(2) = screenVertices(i2%).c
     END IF
 
-    IF polyStyle% = polyStyleTextured% THEN
+    IF polyStyle% AND polyStyleTextured% <> 0 THEN
         eu%(0) = screenVertices(i0%).u
         eu%(1) = screenVertices(i1%).u
         eu%(2) = screenVertices(i2%).u
@@ -1057,23 +1111,28 @@ SUB DrawPoly (i%, polyOffset%, polyIndex%, polyStyle%)
     IF edgeYmax% > edgeYmin% THEN
 
         matIndex% = objectPolyMatIndices%(polyOffset% + polyIndex%)
-        col% = material(matIndex%).ambient
+        colBase% = material(matIndex%).baseColor
 
         SELECT CASE polyStyle%
 
             CASE polyStyleFlat%
                 PrepareEdgeListsFlat
-                DrawEdgesFlat col% + screenPolyShades%(polyIndex%)
+                DrawEdgesFlat colBase% + screenPolyShades%(polyIndex%)
 
             CASE polyStyleGouraud%
                 PrepareEdgeListsGouraud
                 CalcTriangleGrads TRUE%, FALSE%
-                DrawEdgesGouraud col%
+                DrawEdgesGouraud colBase%
 
             CASE polyStyleTextured%
                 PrepareEdgeListsTextured
                 CalcTriangleGrads FALSE%, TRUE%
-                DrawEdgesTextured col%
+                DrawEdgesTextured colBase%
+
+            CASE polyStyleTexturedGouraud%
+                PrepareEdgeListsTexturedGouraud
+                CalcTriangleGrads TRUE%, TRUE%
+                DrawEdgesTexturedGouraud colBase%
 
             CASE ELSE
         END SELECT
@@ -1142,6 +1201,51 @@ SUB FlipPolygonOrientation (obj AS Object3D)
         objectPolyIndices%(i%) = objectPolyIndices%(i% + 2)
         objectPolyIndices%(i% + 2) = k%
     NEXT i%
+
+END SUB
+
+SUB GenEnvmapTex (num%)
+
+    SELECT CASE num%
+
+        CASE 0
+            i% = 0
+            FOR y% = 0 TO ENVTEXHEIGHT% - 1
+                yc% = y% - ENVTEXHEIGHT% \ 2
+                FOR x% = 0 TO ENVTEXWIDTH% - 1
+                    xc% = x% - ENVTEXWIDTH% \ 2
+                    r& = SQR(xc% * xc% + yc% * yc%)
+                    r& = r& * r&
+                    c& = SPECULARWIDTH% - 1
+                    IF r& > 0 THEN
+                        c& = 1024 \ r&
+                    END IF
+
+                    IF c& < 0 THEN c& = 0
+                    IF c& > SPECULARWIDTH% - 1 THEN c& = SPECULARWIDTH% - 1
+
+                    blobTex%(i%) = c&
+                    i% = i% + 1
+                NEXT x%
+            NEXT y%
+
+        CASE 1
+            i% = 0
+            FOR y% = 0 TO ENVTEXHEIGHT% - 1
+                FOR x% = 0 TO ENVTEXWIDTH% - 1
+                    c% = (SIN(x% * .5) + COS(y% * .75) + SIN(x% * .375 + y% * .25)) * SPECULARWIDTH% / 2 + SPECULARWIDTH% / 2
+
+                    IF c% < 0 THEN c% = 0
+                    IF c% > SPECULARWIDTH% - 1 THEN c% = SPECULARWIDTH% - 1
+
+                    blobTex%(i%) = c%
+                    i% = i% + 1
+                NEXT x%
+            NEXT y%
+
+        CASE ELSE
+
+    END SELECT
 
 END SUB
 
@@ -1298,6 +1402,9 @@ SUB HandleInput (dt!)
         CASE "d", "D"
             object(currentObject%).polyStyle = polyStyleTextured%
 
+        CASE "f", "F"
+            object(currentObject%).polyStyle = polyStyleTexturedGouraud%
+
         CASE "p", "P"
             currentMatIndex% = (currentMatIndex% + 1) AND 3
             ChangeObjectPolyMaterials object(currentObject%), currentMatIndex%
@@ -1311,12 +1418,7 @@ SUB HandleInput (dt!)
         CASE "y", "Y"
             rotZ! = rotZ! + PI! / 2
 
-        CASE "f", "F"
-            FlipPolygonOrientation object(currentObject%)
-            CalcObjectPolyNormals object(currentObject%)
-            CalcObjectVertexNormals object(currentObject%)
-
-        CASE ELSE
+    CASE ELSE
 
     END SELECT
 
@@ -1401,30 +1503,12 @@ SUB InitPrecalcs
 ' Some materials
 
     FOR i% = 0 TO 3
-        SetMaterial i% * 64, 0, 64, material(i%)
+        material(i%).baseColor = i% * MATERIALWIDTH%
     NEXT i%
 
 ' Texture for envmap
 
-    i% = 0
-    FOR y% = 0 TO ENVTEXHEIGHT% - 1
-        yc% = y% - ENVTEXHEIGHT% \ 2
-        FOR x% = 0 TO ENVTEXWIDTH% - 1
-            xc% = x% - ENVTEXWIDTH% \ 2
-            r& = SQR(xc% * xc% + yc% * yc%)
-            r& = r& * r&
-            c& = 63
-            IF r& > 0 THEN
-                c& = 16384 \ r&
-            END IF
-
-            IF c& < 0 THEN c& = 0
-            IF c& > 63 THEN c& = 63
-
-            blobTex%(i%) = c&
-            i% = i% + 1
-        NEXT x%
-    NEXT y%
+    GenEnvmapTex 0
 
 END SUB
 
@@ -1808,6 +1892,55 @@ SUB PrepareEdgeListsTextured
 
 END SUB
 
+SUB PrepareEdgeListsTexturedGouraud
+
+    FOR n% = 0 TO 2
+        i0% = n%: i1% = n% + 1
+        IF i1% = 3 THEN i1% = 0
+
+        ys0% = ey%(i0%): ys1% = ey%(i1%)
+
+        IF ys0% <> ys1% THEN
+            IF (ys0% < ys1%) THEN
+                xs0% = ex%(i0%): cs0% = ec%(i0%)
+                us0% = eu%(i0%): vs0% = ev%(i0%)
+
+                dy% = ys1% - ys0%
+                dx% = (ex%(i1%) - xs0%) \ dy%
+                dc% = (ec%(i1%) - cs0%) \ dy%
+                du% = (eu%(i1%) - us0%) \ dy%
+                dv% = (ev%(i1%) - vs0%) \ dy%
+
+                FOR y% = ys0% TO ys1% - 1
+                    IF y% >= 0 AND y% < SCRHEIGHT% THEN
+                        polyEdgeLeft(y%).x = xs0%
+                        polyEdgeLeft(y%).c = cs0%
+                        polyEdgeLeft(y%).u = us0%
+                        polyEdgeLeft(y%).v = vs0%
+                    END IF
+                    xs0% = xs0% + dx%
+                    cs0% = cs0% + dc%
+                    us0% = us0% + du%
+                    vs0% = vs0% + dv%
+                NEXT y%
+
+            ELSE
+                xs0% = ex%(i1%)
+                dx% = (ex%(i0%) - xs0%) \ (ys0% - ys1%)
+
+                FOR y% = ys1% TO ys0% - 1
+                    IF y% >= 0 AND y% < SCRHEIGHT% THEN
+                        polyEdgeRightX%(y%) = xs0%
+                    END IF
+                    xs0% = xs0% + dx%
+                NEXT y%
+            END IF
+
+        END IF
+    NEXT n%
+
+END SUB
+
 SUB ReadLineStringFromPlg (fileHandle%, bufDst$)
 
     DO
@@ -1856,6 +1989,10 @@ SUB RenderObject3D (obj AS Object3D)
                 CASE polyStyleGouraud%
                     CalcObjectVertexLighting obj, lights(0)
                 CASE polyStyleTextured%
+                    RotateObjectVertexNormals obj, rotMat()
+                    CalcObjectEnvmapTC obj
+                CASE polyStyleTexturedGouraud%
+                    CalcObjectVertexLighting obj, lights(0)
                     RotateObjectVertexNormals obj, rotMat()
                     CalcObjectEnvmapTC obj
                 CASE ELSE
@@ -2128,16 +2265,24 @@ CONST palTest% = 2
             NEXT i%
 
         CASE 2
-            r0% = 15: g0% = 7: b0% = 31
-            r1% = 127: g1% = 63: b1% = 191
-            r2% = 255: g2% = 255: b2% = 255
+            r0% = 0: g0% = 0: b0% = 0
+            r1% = 11: g1% = 15: b1% = 23
+            r2% = 31: g2% = 31: b2% = 31
 
-            FOR i% = 0 TO 3
-                k% = i% * 64
-                ii% = 12 * (i% - 2)
-                SetGradPal k%, k% + 31 + ii%, r0%, g0%, b0%, r1%, g1%, b1%
-                SetGradPal k% + 32 + ii%, k% + 63, r1%, g1%, b1%, r2%, g2%, b2%
-            NEXT i%
+            SetGradPal k%, k% + DIFFUSEWIDTH% - 1, r0%, g0%, b0%, r1%, g1%, b1%
+            SetGradPal k% + DIFFUSEWIDTH%, k% + MATERIALWIDTH% - 1, r1%, g1%, b1%, r2%, g2%, b2%
+           
+            SetGradPal MATERIALWIDTH% + k%, MATERIALWIDTH% + k% + DIFFUSEWIDTH% - 1, b0%, g0%, r0%, b1%, g1%, r1%
+            SetGradPal MATERIALWIDTH% + k% + DIFFUSEWIDTH%, MATERIALWIDTH% + k% + MATERIALWIDTH% - 1, b1%, g1%, r1%, b2%, g2%, r2%
+           
+            SetGradPal 2 * MATERIALWIDTH% + k%, 2 * MATERIALWIDTH% + k% + DIFFUSEWIDTH% - 1, r0%, b0%, g0%, r1%, b1%, g1%
+            SetGradPal 2 * MATERIALWIDTH% + k% + DIFFUSEWIDTH%, 2 * MATERIALWIDTH% + k% + MATERIALWIDTH% - 1, r1%, b1%, g1%, r2%, b2%, g2%
+           
+            SetGradPal 3 * MATERIALWIDTH% + k%, 3 * MATERIALWIDTH% + k% + DIFFUSEWIDTH% - 1, g0%, r0%, b0%, g1%, r1%, b1%
+            SetGradPal 3 * MATERIALWIDTH% + k% + DIFFUSEWIDTH%, 3 * MATERIALWIDTH% + k% + MATERIALWIDTH% - 1, g1%, r1%, b1%, g2%, r2%, b2%
+
+
+
 
         CASE ELSE
 
@@ -2147,19 +2292,11 @@ END SUB
 
 SUB SetGradPal (c0%, c1%, r0%, g0%, b0%, r1%, g1%, b1%)
 
-    ri0% = r0% \ 4
-    gi0% = g0% \ 4
-    bi0% = b0% \ 4
-
-    ri1% = r1% \ 4
-    gi1% = g1% \ 4
-    bi1% = b1% \ 4
-
     dc% = c1% - c0%
-    r! = ri0%: g! = gi0%: b! = bi0%
-    dr! = (ri1% - ri0%) / dc%
-    dg! = (gi1% - gi0%) / dc%
-    db! = (bi1% - bi0%) / dc%
+    r! = r0%: g! = g0%: b! = b0%
+    dr! = (r1% - r0%) / dc%
+    dg! = (g1% - g0%) / dc%
+    db! = (b1% - b0%) / dc%
 
     OUT &H3C8, c0%
 
@@ -2195,14 +2332,6 @@ SUB SetLightPosition (x!, y!, z!, index%)
     lights(index%).x = x!
     lights(index%).y = y!
     lights(index%).z = z!
-
-END SUB
-
-SUB SetMaterial (a%, d%, s%, mat AS PolyMaterial)
-
-    mat.ambient = a%
-    mat.diffuse = d%
-    mat.specular = s%
 
 END SUB
 
