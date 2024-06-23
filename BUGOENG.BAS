@@ -1,4 +1,3 @@
-DECLARE SUB GenEnvmapTex (num%)
 TYPE Vertex3D
     x AS INTEGER
     y AS INTEGER
@@ -80,8 +79,8 @@ CONST TRUE% = 1
 
 CONST PI! = 3.14159265359#
 
-CONST BENCHSECS% = 1500 ' put something high to not exit or bench or say 15 secs to run alone and exit with fps
-CONST CONTROLS% = TRUE% ' If false, auto rotate object in RunScene3D, else let the user control position/rotation
+CONST BENCHSECS% = 15 ' put something high to not exit or bench or say 15 secs to run alone and exit with fps
+CONST CONTROLS% = FALSE% ' If false, auto rotate object in RunScene3D, else let the user control position/rotation
 
 ' ---- Main Functions ----
 
@@ -206,6 +205,7 @@ DECLARE SUB SetLightPosition (x!, y!, z!, index%)
 DECLARE SUB InitScene3D ()
 DECLARE SUB RunScene3D (t!)
 
+DECLARE SUB GenEnvmapTex (num%)
 
 ' ---- Engine Consts ----
 
@@ -237,7 +237,7 @@ CONST ENVTEXWIDTH% = 128
 CONST ENVTEXHEIGHT% = 128
 
 CONST MATERIALWIDTH% = 64
-CONST DIFFUSEWIDTH% = 2 * MATERIALWIDTH% \ 4
+CONST DIFFUSEWIDTH% = 3 * MATERIALWIDTH% \ 4
 CONST SPECULARWIDTH% = MATERIALWIDTH% - DIFFUSEWIDTH%
 
 
@@ -575,7 +575,7 @@ SUB CalcObjectPolyLighting (obj AS Object3D, light AS Vector3D)
         IF d% < 0 THEN d% = 0
         IF d% > FPNORM% THEN d% = FPNORM%
 
-        screenPolyShades%(i%) = (63 * d%) \ FPNORM%
+        screenPolyShades%(i%) = ((MATERIALWIDTH% - 1) * d%) \ FPNORM%
     NEXT i%
 
 END SUB
@@ -1233,7 +1233,7 @@ SUB GenEnvmapTex (num%)
             i% = 0
             FOR y% = 0 TO ENVTEXHEIGHT% - 1
                 FOR x% = 0 TO ENVTEXWIDTH% - 1
-                    c% = (SIN(x% * .5) + COS(y% * .75) + SIN(x% * .375 + y% * .25)) * SPECULARWIDTH% / 2 + SPECULARWIDTH% / 2
+                    c% = (SIN(x% * .5) + COS(y% * .375) + SIN(x% * .625 + y% * .25)) * SPECULARWIDTH% / 2 + SPECULARWIDTH% / 2
 
                     IF c% < 0 THEN c% = 0
                     IF c% > SPECULARWIDTH% - 1 THEN c% = SPECULARWIDTH% - 1
@@ -2266,20 +2266,20 @@ CONST palTest% = 2
 
         CASE 2
             r0% = 0: g0% = 0: b0% = 0
-            r1% = 11: g1% = 15: b1% = 23
-            r2% = 31: g2% = 31: b2% = 31
+            r1% = 15: g1% = 23: b1% = 31
+            r2% = 63: g2% = 63: b2% = 63
 
-            SetGradPal k%, k% + DIFFUSEWIDTH% - 1, r0%, g0%, b0%, r1%, g1%, b1%
-            SetGradPal k% + DIFFUSEWIDTH%, k% + MATERIALWIDTH% - 1, r1%, g1%, b1%, r2%, g2%, b2%
+            SetGradPal 0, DIFFUSEWIDTH% - 1, r0%, g0%, b0%, r1%, g1%, b1%
+            SetGradPal DIFFUSEWIDTH%, MATERIALWIDTH% - 1, r1%, g1%, b1%, r2%, g2%, b2%
            
-            SetGradPal MATERIALWIDTH% + k%, MATERIALWIDTH% + k% + DIFFUSEWIDTH% - 1, b0%, g0%, r0%, b1%, g1%, r1%
-            SetGradPal MATERIALWIDTH% + k% + DIFFUSEWIDTH%, MATERIALWIDTH% + k% + MATERIALWIDTH% - 1, b1%, g1%, r1%, b2%, g2%, r2%
+            SetGradPal MATERIALWIDTH%, MATERIALWIDTH% + DIFFUSEWIDTH% - 1, b0%, g0%, r0%, b1%, g1%, r1%
+            SetGradPal MATERIALWIDTH% + DIFFUSEWIDTH%, MATERIALWIDTH% + MATERIALWIDTH% - 1, b1%, g1%, r1%, b2%, g2%, r2%
            
-            SetGradPal 2 * MATERIALWIDTH% + k%, 2 * MATERIALWIDTH% + k% + DIFFUSEWIDTH% - 1, r0%, b0%, g0%, r1%, b1%, g1%
-            SetGradPal 2 * MATERIALWIDTH% + k% + DIFFUSEWIDTH%, 2 * MATERIALWIDTH% + k% + MATERIALWIDTH% - 1, r1%, b1%, g1%, r2%, b2%, g2%
+            SetGradPal 2 * MATERIALWIDTH%, 2 * MATERIALWIDTH% + DIFFUSEWIDTH% - 1, r0%, b0%, g0%, r1%, b1%, g1%
+            SetGradPal 2 * MATERIALWIDTH% + DIFFUSEWIDTH%, 2 * MATERIALWIDTH% + MATERIALWIDTH% - 1, r1%, b1%, g1%, r2%, b2%, g2%
            
-            SetGradPal 3 * MATERIALWIDTH% + k%, 3 * MATERIALWIDTH% + k% + DIFFUSEWIDTH% - 1, g0%, r0%, b0%, g1%, r1%, b1%
-            SetGradPal 3 * MATERIALWIDTH% + k% + DIFFUSEWIDTH%, 3 * MATERIALWIDTH% + k% + MATERIALWIDTH% - 1, g1%, r1%, b1%, g2%, r2%, b2%
+            SetGradPal 3 * MATERIALWIDTH%, 3 * MATERIALWIDTH% + DIFFUSEWIDTH% - 1, g0%, r0%, b0%, g1%, r1%, b1%
+            SetGradPal 3 * MATERIALWIDTH% + DIFFUSEWIDTH%, 3 * MATERIALWIDTH% + MATERIALWIDTH% - 1, g1%, r1%, b1%, g2%, r2%, b2%
 
 
 
