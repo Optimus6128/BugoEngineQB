@@ -9,15 +9,16 @@ CONST FALSE% = 0
 CONST TRUE% = 1
 
 CONST PI! = 3.14159265359#
+CONST RAD256! = 256! / (2 * PI!)
 
 
 ' ---- Main Functions ----
 
 DECLARE SUB FFIX (Mode%)
 
-DECLARE SUB InitPrecalcs ()
+DECLARE SUB InitPrecalcs (fxType%)
 
-DECLARE SUB SetDefaultPalette ()
+DECLARE SUB InitPalette (fxType%)
 DECLARE SUB SetGradPal (c0%, c1%, r0%, g0%, b0%, r1%, g1%, b1%)
 DECLARE SUB DisplayPalette ()
 
@@ -30,6 +31,11 @@ DECLARE SUB HandleInput (dt!)
 
 ' ---- FX functions  ----
 
+DECLARE SUB InitFxPlasma ()
+
+DECLARE SUB RunFxPlasma ()
+
+DECLARE SUB RunFx (fxType%)
 
 ' ---- Main arrays ----
 
@@ -44,19 +50,39 @@ vram%(7) = 200
 DIM SHARED quit%
 quit% = FALSE%
 
+DIM SHARED nframe&
+
+
+' ---- Fx arrays ----
+
+DIM SHARED fsin1%(0 TO 255)
+DIM SHARED fsin2%(0 TO 255)
+DIM SHARED fsin3%(0 TO 255)
+
+
+' ---- Fx index ----
+
+CONST fxPlasma% = 0
+CONST fxRotozoomer% = 1
+CONST fxFloor% = 2
+CONST fxBump% = 3
+CONST fxSphere% = 4
+CONST fxVoxel% = 5
+CONST fxWater% = 6
+
+fxCurrent% = fxPlasma%
+
 
 ' ---- Init ----
 
 ' Load FFIX to memory
 'FFIX 0
 
-InitPrecalcs
+InitPrecalcs fxCurrent%
 
 SCREEN 13
 
-COLOR 63
-
-SetDefaultPalette
+InitPalette fxCurrent%
 
 
 ' ---- Main Loop ----
@@ -78,6 +104,8 @@ DO WHILE quit% = FALSE%
     HandleInput timeDiff!
 
     'WaitForVsync
+
+    RunFx fxCurrent%
 
     WriteVram
 
@@ -185,83 +213,135 @@ SUB HandleInput (dt!)
 
 END SUB
 
-SUB InitPrecalcs
+SUB InitFxPlasma
+
+    FOR i% = 0 TO 255
+        fsin1%(i%) = INT(SIN(i% / RAD256!) * 31!)
+        fsin2%(i%) = INT(SIN(i% / (RAD256! / 2)) * 45!)
+        fsin3%(i%) = INT(SIN(i% / (RAD256! / 4)) * 7!)
+    NEXT i%
 
 END SUB
 
-SUB SetDefaultPalette
+SUB InitPalette (fxType%)
 
-OUT &H3C8, 0
-OUT &H3C9, 0
-OUT &H3C9, 0
-OUT &H3C9, 0
+    OUT &H3C8, 0
+    OUT &H3C9, 0
+    OUT &H3C9, 0
+    OUT &H3C9, 0
 
-CONST palTest% = 2
+    SELECT CASE fxType%
 
-    SELECT CASE palTest%
+        CASE fxPlasma%
 
-        CASE 0
+            SetGradPal 0, 63, 0, 0, 0, 15, 31, 63
+            SetGradPal 64, 127, 15, 31, 63, 63, 47, 15
+          
+            SetGradPal 128, 191, 63, 47, 15, 47, 15, 63
+            SetGradPal 192, 255, 47, 15, 63, 0, 0, 0
 
-            FOR i% = 1 TO 127
-                OUT &H3C9, (1 * i% \ 2) AND 63
-                OUT &H3C9, (.75 * i% \ 2) AND 63
-                OUT &H3C9, (2 * i% \ 2) AND 63
-            NEXT i%
-            FOR i% = 128 TO 255
-                OUT &H3C9, (2 * (i% - 128) \ 2) AND 63
-                OUT &H3C9, (1 * (i% - 128) \ 2) AND 63
-                OUT &H3C9, (.75 * (i% - 128) \ 2) AND 63
-            NEXT i%
+        CASE fxRotozoomer%
 
-        CASE 1
+        CASE fxFloor%
 
-            FOR i% = 1 TO 63
-                OUT &H3C9, i% \ 1
-                OUT &H3C9, 16 + i% \ 2
-                OUT &H3C9, 32 + i% \ 4
-            NEXT i%
+        CASE fxBump%
 
-            FOR i% = 64 TO 127
-                ii% = i% - 64
-                OUT &H3C9, ii% \ 3
-                OUT &H3C9, ii% \ 1
-                OUT &H3C9, ii% \ 4
-            NEXT i%
+        CASE fxSphere%
 
-            FOR i% = 128 TO 191
-                ii% = i% - 128
-                OUT &H3C9, ii% \ 3
-                OUT &H3C9, ii% \ 4
-                OUT &H3C9, ii% \ 1
-            NEXT i%
+        CASE fxVoxel%
 
-            FOR i% = 192 TO 255
-                ii% = i% - 192
-                OUT &H3C9, ii% \ 1
-                OUT &H3C9, ii% \ 3
-                OUT &H3C9, ii% \ 1
-            NEXT i%
-
-        CASE 2
-            r0% = 0: g0% = 0: b0% = 0
-            r1% = 15: g1% = 23: b1% = 31
-            r2% = 63: g2% = 63: b2% = 63
-
-            SetGradPal 0, 31, r0%, g0%, b0%, r1%, g1%, b1%
-            SetGradPal 32, 63, r1%, g1%, b1%, r2%, g2%, b2%
-           
-            SetGradPal 64, 95, b0%, g0%, r0%, b1%, g1%, r1%
-            SetGradPal 96, 127, b1%, g1%, r1%, b2%, g2%, r2%
-           
-            SetGradPal 128, 159, r0%, b0%, g0%, r1%, b1%, g1%
-            SetGradPal 160, 191, r1%, b1%, g1%, r2%, b2%, g2%
-           
-            SetGradPal 192, 223, g0%, r0%, b0%, g1%, r1%, b1%
-            SetGradPal 224, 255, g1%, r1%, b1%, g2%, r2%, b2%
+        CASE fxWater%
 
         CASE ELSE
 
     END SELECT
+
+    COLOR 63
+
+END SUB
+
+SUB InitPrecalcs (fxType%)
+
+    SELECT CASE fxType%
+
+        CASE fxPlasma%
+            InitFxPlasma
+
+        CASE fxRotozoomer%
+
+        CASE fxFloor%
+
+        CASE fxBump%
+
+        CASE fxSphere%
+
+        CASE fxVoxel%
+
+        CASE fxWater%
+
+        CASE ELSE
+
+    END SELECT
+
+END SUB
+
+SUB RunFx (fxType%)
+
+    SELECT CASE fxType%
+
+        CASE fxPlasma%
+            RunFxPlasma
+
+        CASE fxRotozoomer%
+
+        CASE fxFloor%
+
+        CASE fxBump%
+
+        CASE fxSphere%
+
+        CASE fxVoxel%
+
+        CASE fxWater%
+
+        CASE ELSE
+
+    END SELECT
+
+END SUB
+
+SUB RunFxPlasma
+
+    DIM fsinX%(0 TO SCRWIDTH% - 1)
+
+    t% = (nframe& \ 2) AND 32767
+
+    i% = 0
+    FOR x% = 0 TO SCRWIDTH% - 1 STEP 2
+        c0% = x% + fsin1%((x% + t%) AND 255) + fsin2%((x% + fsin3%((x% - 2 * t%) AND 255)) AND 255)
+        c1% = x% + 1 + fsin1%((x% + 1 + t%) AND 255) + fsin2%((x% + 1 + fsin3%((x% + 1 - 2 * t%) AND 255)) AND 255)
+        fsinX%(i%) = (c1% * 256) OR (c0% AND 255)
+        i% = i% + 1
+    NEXT x%
+
+    i% = 8
+    FOR y% = 0 TO SCRHEIGHT% - 1
+
+        yp% = y% - fsin2%((y% - t%) AND 255) + fsin3%((fsin1%((y% + t%) AND 255) + y% + 3 * t%) AND 255)
+        yp% = yp% AND 255
+        yp% = (yp% * 256) OR yp%
+        FOR x% = 0 TO SCRWIDTH% / 2 - 1 STEP 8
+            vram%(i%) = fsinX%(x%) + yp%
+            vram%(i% + 1) = fsinX%(x% + 1) + yp%
+            vram%(i% + 2) = fsinX%(x% + 2) + yp%
+            vram%(i% + 3) = fsinX%(x% + 3) + yp%
+            vram%(i% + 4) = fsinX%(x% + 4) + yp%
+            vram%(i% + 5) = fsinX%(x% + 5) + yp%
+            vram%(i% + 6) = fsinX%(x% + 6) + yp%
+            vram%(i% + 7) = fsinX%(x% + 7) + yp%
+            i% = i% + 8
+        NEXT x%
+    NEXT y%
 
 END SUB
 
