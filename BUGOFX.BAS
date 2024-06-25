@@ -1,5 +1,11 @@
-DECLARE SUB RunFxRotozoomer ()
-DECLARE SUB InitFxRotozoomer ()
+DECLARE SUB CalcLineStepVars (angle!, zoom!)
+TYPE StepVars
+    u AS INTEGER
+    v AS INTEGER
+    du AS INTEGER
+    dv AS INTEGER
+END TYPE
+
 ' ---- Common Consts ----
 
 CONST SCRWIDTH% = 320
@@ -34,8 +40,12 @@ DECLARE SUB HandleInput (dt!)
 ' ---- FX functions  ----
 
 DECLARE SUB InitFxPlasma ()
+DECLARE SUB InitFxRotozoomer ()
+DECLARE SUB InitFxFloor ()
 
 DECLARE SUB RunFxPlasma ()
+DECLARE SUB RunFxRotozoomer ()
+DECLARE SUB RunFxFloor ()
 
 DECLARE SUB RunFx (fxType%)
 
@@ -76,6 +86,8 @@ DIM SHARED tile%(0 TO fuw%, 0 TO fuh%)' using the consts here would degrade perf
 
 DIM SHARED RotoDivs%(0 TO RotoDivN%)
 
+DIM SHARED lineStepVars(0 TO SCRHEIGHT% - 1) AS StepVars
+
 
 ' ---- Fx index ----
 
@@ -87,7 +99,7 @@ CONST fxSphere% = 4
 CONST fxVoxel% = 5
 CONST fxWater% = 6
 
-fxCurrent% = fxRotozoomer%
+fxCurrent% = fxFloor%
 
 
 ' ---- Init ----
@@ -144,6 +156,30 @@ SLEEP
 
 ' Unload FFIX from memory
 'FFIX 1
+
+SUB CalcLineStepVars (angle!, zoom!)
+
+    du% = COS(angle!) * 64 * zoom!
+    dv% = SIN(angle!) * 64 * zoom!
+
+    u% = (-SCRWIDTH% \ 2) * du%
+    v% = (-SCRHEIGHT% \ 2) * dv%
+
+    FOR y% = 0 TO SCRHEIGHT% - 1
+        yp% = y% - SCRHEIGHT% \ 2
+        IF yp% < 0 THEN yp% = -yp%
+        IF yp% = 0 THEN yp% = 1
+
+        lineStepVars(y%).u = u% \ yp%
+        lineStepVars(y%).v = v% \ yp%
+        lineStepVars(y%).du = (du% * 4) \ yp%
+        lineStepVars(y%).dv = (dv% * 4) \ yp%
+
+        u% = u% - dv%
+        v% = v% + du%
+    NEXT y%
+
+END SUB
 
 SUB ClearVram
 
@@ -233,6 +269,16 @@ SUB HandleInput (dt!)
 
 END SUB
 
+SUB InitFxFloor
+
+    FOR y% = 0 TO RotoTexH% - 1
+        FOR x% = 0 TO RotoTexW% - 1
+            tile%(y%, x%) = x% XOR y%
+        NEXT x%
+    NEXT y%
+
+END SUB
+
 SUB InitFxPlasma
 
     FOR i% = 0 TO 255
@@ -247,13 +293,9 @@ SUB InitFxRotozoomer
 
     FOR y% = 0 TO RotoTexH% - 1
         FOR x% = 0 TO RotoTexW% - 1
-            tile%(y%, x%) = (y% AND x%) * RND(255)
+            tile%(y%, x%) = (y% AND x%) * RND
         NEXT x%
     NEXT y%
-
-    FOR i% = 0 TO RotoDivN%
-        RotoDivs%(i%) = i% \ 256
-    NEXT i%
 
 END SUB
 
@@ -280,6 +322,11 @@ SUB InitPalette (fxType%)
 
         CASE fxFloor%
 
+            SetGradPal 0, 7, 0, 0, 0, 31, 47, 63
+            SetGradPal 8, 15, 31, 47, 63, 0, 0, 15
+            SetGradPal 16, 23, 0, 0, 15, 63, 47, 31
+            SetGradPal 24, 31, 63, 47, 31, 0, 0, 0
+
         CASE fxBump%
 
         CASE fxSphere%
@@ -298,6 +345,8 @@ END SUB
 
 SUB InitPrecalcs (fxType%)
 
+    mustInitRotoDivs% = FALSE%
+
     SELECT CASE fxType%
 
         CASE fxPlasma%
@@ -305,8 +354,47 @@ SUB InitPrecalcs (fxType%)
 
         CASE fxRotozoomer%
             InitFxRotozoomer
+            mustInitRotoDivs% = TRUE%
 
         CASE fxFloor%
+            InitFxFloor
+            mustInitRotoDivs% = TRUE%
+
+        CASE fxBump%
+
+        CASE fxSphere%
+
+        CASE fxVoxel%
+
+        CASE fxWater%
+
+        CASE ELSE
+
+    END SELECT
+
+
+    ' ---- Common Precalcs ----
+
+    IF mustInitRotoDivs% = TRUE% THEN
+        FOR i% = 0 TO RotoDivN%
+            RotoDivs%(i%) = i% \ 256
+        NEXT i%
+    END IF
+
+END SUB
+
+SUB RunFx (fxType%)
+
+    SELECT CASE fxType%
+
+        CASE fxPlasma%
+            RunFxPlasma
+
+        CASE fxRotozoomer%
+            RunFxRotozoomer
+
+        CASE fxFloor%
+            RunFxFloor
 
         CASE fxBump%
 
@@ -322,29 +410,59 @@ SUB InitPrecalcs (fxType%)
 
 END SUB
 
-SUB RunFx (fxType%)
+SUB RunFxFloor
 
-    SELECT CASE fxType%
+    STATIC angle!
 
-        CASE fxPlasma%
-            RunFxPlasma
+    t% = nframe& AND 32767
+    zoom! = SIN(t% * .02) + 1.5
 
-        CASE fxRotozoomer%
-            RunFxRotozoomer
+    CalcLineStepVars angle!, zoom!
 
-        CASE fxFloor%
+    screenSeg& = VARSEG(vram%(0)) + 1
 
-        CASE fxBump%
+    FOR y% = 0 TO SCRHEIGHT% - 1
+        DEF SEG = screenSeg& + y% * 20
 
-        CASE fxSphere%
+        u% = lineStepVars(y%).u
+        v% = lineStepVars(y%).v
+        du% = lineStepVars(y%).du
+        dv% = lineStepVars(y%).dv
 
-        CASE fxVoxel%
+        du2% = 2 * du%
+        dv2% = 2 * dv%
+        du3% = du2% + du%
+        dv3% = dv2% + dv%
+        du4% = 2 * du2%
+        dv4% = 2 * dv2%
+        du5% = du4% + du%
+        dv5% = dv4% + dv%
+        du6% = du4% + du2%
+        dv6% = dv4% + dv2%
+        du7% = du6% + du%
+        dv7% = dv6% + dv%
+        du8% = 2 * du4%
+        dv8% = 2 * dv4%
 
-        CASE fxWater%
+        FOR x% = 0 TO SCRWIDTH% - 1 STEP 8
 
-        CASE ELSE
+            POKE x%, tile%(RotoDivs%(v% AND RotoDivN%), RotoDivs%(u% AND RotoDivN%))
+            POKE x% + 1, tile%(RotoDivs%((v% + dv1%) AND RotoDivN%), RotoDivs%((u% + du1%) AND RotoDivN%))
+            POKE x% + 2, tile%(RotoDivs%((v% + dv2%) AND RotoDivN%), RotoDivs%((u% + du2%) AND RotoDivN%))
+            POKE x% + 3, tile%(RotoDivs%((v% + dv3%) AND RotoDivN%), RotoDivs%((u% + du3%) AND RotoDivN%))
+            POKE x% + 4, tile%(RotoDivs%((v% + dv4%) AND RotoDivN%), RotoDivs%((u% + du4%) AND RotoDivN%))
+            POKE x% + 5, tile%(RotoDivs%((v% + dv5%) AND RotoDivN%), RotoDivs%((u% + du5%) AND RotoDivN%))
+            POKE x% + 6, tile%(RotoDivs%((v% + dv6%) AND RotoDivN%), RotoDivs%((u% + du6%) AND RotoDivN%))
+            POKE x% + 7, tile%(RotoDivs%((v% + dv7%) AND RotoDivN%), RotoDivs%((u% + du7%) AND RotoDivN%))
 
-    END SELECT
+            u% = u% + du8%
+            v% = v% + dv8%
+
+        NEXT x%
+
+    NEXT y%
+
+    angle! = angle! + .025
 
 END SUB
 
@@ -385,29 +503,28 @@ END SUB
 
 SUB RunFxRotozoomer
 
-    STATIC rotAng!
+    STATIC angle!
 
     t% = nframe& AND 32767
-
     zoom! = SIN(t% * .02) + 1.5
-   
-    du% = COS(rotAng!) * 64 * zoom!
-    dv% = SIN(rotAng!) * 64 * zoom!
+
+    du% = COS(angle!) * 64 * zoom!
+    dv% = SIN(angle!) * 64 * zoom!
 
     du2% = 2 * du%
     dv2% = 2 * dv%
-    du3% = 3 * du%
-    dv3% = 3 * dv%
-    du4% = 4 * du%
-    dv4% = 4 * dv%
-    du5% = 5 * du%
-    dv5% = 5 * dv%
-    du6% = 6 * du%
-    dv6% = 6 * dv%
-    du7% = 7 * du%
-    dv7% = 7 * dv%
-    du8% = 8 * du%
-    dv8% = 8 * dv%
+    du3% = du2% + du%
+    dv3% = dv2% + dv%
+    du4% = 2 * du2%
+    dv4% = 2 * dv2%
+    du5% = du4% + du%
+    dv5% = dv4% + dv%
+    du6% = du4% + du2%
+    dv6% = dv4% + dv2%
+    du7% = du6% + du%
+    dv7% = dv6% + dv%
+    du8% = 2 * du4%
+    dv8% = 2 * dv4%
 
     u% = -160 * du%
     v% = -100 * dv%
@@ -423,7 +540,7 @@ SUB RunFxRotozoomer
         FOR x% = 0 TO SCRWIDTH% - 1 STEP 8
 
             POKE x%, tile%(RotoDivs%(pv% AND RotoDivN%), RotoDivs%(pu% AND RotoDivN%))
-            POKE x% + 1, tile%(RotoDivs%((pv% + dv%) AND RotoDivN%), RotoDivs%((pu% + du%) AND RotoDivN%))
+            POKE x% + 1, tile%(RotoDivs%((pv% + dv1%) AND RotoDivN%), RotoDivs%((pu% + du1%) AND RotoDivN%))
             POKE x% + 2, tile%(RotoDivs%((pv% + dv2%) AND RotoDivN%), RotoDivs%((pu% + du2%) AND RotoDivN%))
             POKE x% + 3, tile%(RotoDivs%((pv% + dv3%) AND RotoDivN%), RotoDivs%((pu% + du3%) AND RotoDivN%))
             POKE x% + 4, tile%(RotoDivs%((pv% + dv4%) AND RotoDivN%), RotoDivs%((pu% + du4%) AND RotoDivN%))
@@ -436,11 +553,12 @@ SUB RunFxRotozoomer
 
         NEXT x%
 
+
         u% = u% - dv%
         v% = v% + du%
     NEXT y%
 
-    rotAng! = rotAng! + .025
+    angle! = angle! + .025
 
 END SUB
 
