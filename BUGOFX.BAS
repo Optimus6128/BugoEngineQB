@@ -1,9 +1,9 @@
-DECLARE SUB CalcLineStepVars (angle!, zoom!)
 TYPE StepVars
     u AS INTEGER
     v AS INTEGER
     du AS INTEGER
     dv AS INTEGER
+    shade AS INTEGER
 END TYPE
 
 ' ---- Common Consts ----
@@ -49,6 +49,9 @@ DECLARE SUB RunFxFloor ()
 
 DECLARE SUB RunFx (fxType%)
 
+DECLARE SUB RotatePoint2D (x&, y&, angle!)
+DECLARE SUB CalcLineStepVars (moveX&, moveY&, angle!)
+
 ' ---- Main arrays ----
 
 '$DYNAMIC
@@ -75,8 +78,8 @@ DIM SHARED fsin3%(0 TO 255)
 
 
 ' If you change the texture sizes (preferably always power of two) you have to manually change the numbers in the array declaration below
-CONST RotoTexW% = 32
-CONST RotoTexH% = 32
+CONST RotoTexW% = 16
+CONST RotoTexH% = 16
 CONST RotoDivN% = RotoTexW% * 256 - 1
 CONST fuw% = RotoTexW% - 1
 CONST fuh% = RotoTexH% - 1
@@ -151,29 +154,45 @@ DO WHILE quit% = FALSE%
 LOOP
 timeEnd! = TIMER
 
+SCREEN 1
+
 PRINT nframe& / (timeEnd! - timeStart!)
 SLEEP
 
 ' Unload FFIX from memory
 'FFIX 1
 
-SUB CalcLineStepVars (angle!, zoom!)
+SUB CalcLineStepVars (moveX&, moveY&, angle!)
 
-    du% = COS(angle!) * 64 * zoom!
-    dv% = SIN(angle!) * 64 * zoom!
-
-    u% = (-SCRWIDTH% \ 2) * du%
-    v% = (-SCRHEIGHT% \ 2) * dv%
+    CONST SKYHEIGHT& = 4096
 
     FOR y% = 0 TO SCRHEIGHT% - 1
-        yp% = y% - SCRHEIGHT% \ 2
+        yp% = SCRHEIGHT% \ 2 - y%
         IF yp% < 0 THEN yp% = -yp%
         IF yp% = 0 THEN yp% = 1
 
-        lineStepVars(y%).u = u% \ yp%
-        lineStepVars(y%).v = v% \ yp%
-        lineStepVars(y%).du = (du% * 4) \ yp%
-        lineStepVars(y%).dv = (dv% * 4) \ yp%
+        z& = SKYHEIGHT& \ yp%
+        u& = 0 + moveX&
+        v& = 128 * z& + moveY&
+
+        du& = z&
+        dv& = 0
+
+        RotatePoint2D u&, v&, angle!
+        RotatePoint2D du&, dv&, angle!
+
+        u& = u& + (-SCRWIDTH% \ 2) * du&
+        v& = v& + (-SCRHEIGHT% \ 2) * dv&
+
+        lineStepVars(y%).u = u&
+        lineStepVars(y%).v = v&
+        lineStepVars(y%).du = du&
+        lineStepVars(y%).dv = dv&
+
+        s% = z& \ 64
+        IF s% < 0 THEN s% = 0
+        IF s% > 15 THEN s% = 15
+        lineStepVars(y%).shade = s%
 
         u% = u% - dv%
         v% = v% + du%
@@ -273,7 +292,7 @@ SUB InitFxFloor
 
     FOR y% = 0 TO RotoTexH% - 1
         FOR x% = 0 TO RotoTexW% - 1
-            tile%(y%, x%) = x% XOR y%
+            tile%(y%, x%) = ((x% XOR y%) * RND) AND 15
         NEXT x%
     NEXT y%
 
@@ -293,7 +312,7 @@ SUB InitFxRotozoomer
 
     FOR y% = 0 TO RotoTexH% - 1
         FOR x% = 0 TO RotoTexW% - 1
-            tile%(y%, x%) = (y% AND x%) * RND
+            tile%(y%, x%) = ((2 * y%) AND (2 * x%)) * RND
         NEXT x%
     NEXT y%
 
@@ -322,10 +341,17 @@ SUB InitPalette (fxType%)
 
         CASE fxFloor%
 
-            SetGradPal 0, 7, 0, 0, 0, 31, 47, 63
-            SetGradPal 8, 15, 31, 47, 63, 0, 0, 15
-            SetGradPal 16, 23, 0, 0, 15, 63, 47, 31
-            SetGradPal 24, 31, 63, 47, 31, 0, 0, 0
+            FOR i% = 0 TO 15
+                s% = i% * 16
+                ii% = 15 - i%
+                r1% = (31 * ii%) \ 15: g1% = (27 * ii%) \ 15: b1% = (15 * ii%) \ 15
+                r2% = (23 * ii%) \ 15: g2% = (7 * ii%) \ 15: b2% = (15 * ii%) \ 15
+                r3% = (47 * ii%) \ 15: g3% = (31 * ii%) \ 15: b3% = (31 * ii%) \ 15
+                SetGradPal s% + 0, s% + 3, 0, 0, 0, r1%, g1%, b1%
+                SetGradPal s% + 4, s% + 7, r1%, g1%, b1%, r2%, g2%, b2%
+                SetGradPal s% + 8, s% + 11, r2%, g2%, b2%, r3%, g3%, b3%
+                SetGradPal s% + 12, s% + 15, r3%, g3%, b3%, 0, 0, 0
+            NEXT i%
 
         CASE fxBump%
 
@@ -338,8 +364,6 @@ SUB InitPalette (fxType%)
         CASE ELSE
 
     END SELECT
-
-    COLOR 63
 
 END SUB
 
@@ -383,6 +407,19 @@ SUB InitPrecalcs (fxType%)
 
 END SUB
 
+SUB RotatePoint2D (x&, y&, angle!)
+
+    rx! = COS(angle!)
+    ry! = SIN(angle!)
+
+    xp! = x&
+    yp! = y&
+
+    x& = xp! * rx! - yp! * ry!
+    y& = xp! * ry! + yp! * rx!
+
+END SUB
+
 SUB RunFx (fxType%)
 
     SELECT CASE fxType%
@@ -413,11 +450,9 @@ END SUB
 SUB RunFxFloor
 
     STATIC angle!
+    STATIC posX&, posY&
 
-    t% = nframe& AND 32767
-    zoom! = SIN(t% * .02) + 1.5
-
-    CalcLineStepVars angle!, zoom!
+    CalcLineStepVars posX&, posY&, angle!
 
     screenSeg& = VARSEG(vram%(0)) + 1
 
@@ -428,6 +463,7 @@ SUB RunFxFloor
         v% = lineStepVars(y%).v
         du% = lineStepVars(y%).du
         dv% = lineStepVars(y%).dv
+        shadePal% = lineStepVars(y%).shade * 16
 
         du2% = 2 * du%
         dv2% = 2 * dv%
@@ -446,14 +482,14 @@ SUB RunFxFloor
 
         FOR x% = 0 TO SCRWIDTH% - 1 STEP 8
 
-            POKE x%, tile%(RotoDivs%(v% AND RotoDivN%), RotoDivs%(u% AND RotoDivN%))
-            POKE x% + 1, tile%(RotoDivs%((v% + dv1%) AND RotoDivN%), RotoDivs%((u% + du1%) AND RotoDivN%))
-            POKE x% + 2, tile%(RotoDivs%((v% + dv2%) AND RotoDivN%), RotoDivs%((u% + du2%) AND RotoDivN%))
-            POKE x% + 3, tile%(RotoDivs%((v% + dv3%) AND RotoDivN%), RotoDivs%((u% + du3%) AND RotoDivN%))
-            POKE x% + 4, tile%(RotoDivs%((v% + dv4%) AND RotoDivN%), RotoDivs%((u% + du4%) AND RotoDivN%))
-            POKE x% + 5, tile%(RotoDivs%((v% + dv5%) AND RotoDivN%), RotoDivs%((u% + du5%) AND RotoDivN%))
-            POKE x% + 6, tile%(RotoDivs%((v% + dv6%) AND RotoDivN%), RotoDivs%((u% + du6%) AND RotoDivN%))
-            POKE x% + 7, tile%(RotoDivs%((v% + dv7%) AND RotoDivN%), RotoDivs%((u% + du7%) AND RotoDivN%))
+            POKE x%, tile%(RotoDivs%(v% AND RotoDivN%), RotoDivs%(u% AND RotoDivN%)) + shadePal%
+            POKE x% + 1, tile%(RotoDivs%((v% + dv1%) AND RotoDivN%), RotoDivs%((u% + du1%) AND RotoDivN%)) + shadePal%
+            POKE x% + 2, tile%(RotoDivs%((v% + dv2%) AND RotoDivN%), RotoDivs%((u% + du2%) AND RotoDivN%)) + shadePal%
+            POKE x% + 3, tile%(RotoDivs%((v% + dv3%) AND RotoDivN%), RotoDivs%((u% + du3%) AND RotoDivN%)) + shadePal%
+            POKE x% + 4, tile%(RotoDivs%((v% + dv4%) AND RotoDivN%), RotoDivs%((u% + du4%) AND RotoDivN%)) + shadePal%
+            POKE x% + 5, tile%(RotoDivs%((v% + dv5%) AND RotoDivN%), RotoDivs%((u% + du5%) AND RotoDivN%)) + shadePal%
+            POKE x% + 6, tile%(RotoDivs%((v% + dv6%) AND RotoDivN%), RotoDivs%((u% + du6%) AND RotoDivN%)) + shadePal%
+            POKE x% + 7, tile%(RotoDivs%((v% + dv7%) AND RotoDivN%), RotoDivs%((u% + du7%) AND RotoDivN%)) + shadePal%
 
             u% = u% + du8%
             v% = v% + dv8%
@@ -462,7 +498,9 @@ SUB RunFxFloor
 
     NEXT y%
 
-    angle! = angle! + .025
+    angle! = angle! + .0025
+    posX& = posX& + 128 * COS(angle!)
+    posY& = posY& + 128 * SIN(angle!)
 
 END SUB
 
