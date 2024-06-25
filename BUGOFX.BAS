@@ -1,3 +1,5 @@
+DECLARE SUB RunFxRotozoomer ()
+DECLARE SUB InitFxRotozoomer ()
 ' ---- Common Consts ----
 
 CONST SCRWIDTH% = 320
@@ -48,7 +50,9 @@ vram%(7) = 200
 '$STATIC
 
 DIM SHARED quit%
+DIM SHARED vsync%
 quit% = FALSE%
+vsync% = FALSE%
 
 DIM SHARED nframe&
 
@@ -58,6 +62,19 @@ DIM SHARED nframe&
 DIM SHARED fsin1%(0 TO 255)
 DIM SHARED fsin2%(0 TO 255)
 DIM SHARED fsin3%(0 TO 255)
+
+
+' If you change the texture sizes (preferably always power of two) you have to manually change the numbers in the array declaration below
+CONST RotoTexW% = 32
+CONST RotoTexH% = 32
+CONST RotoDivN% = RotoTexW% * 256 - 1
+CONST fuw% = RotoTexW% - 1
+CONST fuh% = RotoTexH% - 1
+
+DIM SHARED tile%(0 TO fuw%, 0 TO fuh%)' using the consts here would degrade performance, suddenly the compiler will not produce shifts for 16 but imul
+' update, using second consts to do first const minus 1 will save you. Weird.. but ugly
+
+DIM SHARED RotoDivs%(0 TO RotoDivN%)
 
 
 ' ---- Fx index ----
@@ -70,7 +87,7 @@ CONST fxSphere% = 4
 CONST fxVoxel% = 5
 CONST fxWater% = 6
 
-fxCurrent% = fxPlasma%
+fxCurrent% = fxRotozoomer%
 
 
 ' ---- Init ----
@@ -103,7 +120,7 @@ DO WHILE quit% = FALSE%
 
     HandleInput timeDiff!
 
-    'WaitForVsync
+    IF vsync% = TRUE% THEN WaitForVsync
 
     RunFx fxCurrent%
 
@@ -201,6 +218,9 @@ SUB HandleInput (dt!)
 
     SELECT CASE key$
 
+        CASE "v", "V"
+            vsync% = vsync% XOR TRUE%
+
         CASE "q", "Q"
 
         CASE "w", "W"
@@ -223,6 +243,20 @@ SUB InitFxPlasma
 
 END SUB
 
+SUB InitFxRotozoomer
+
+    FOR y% = 0 TO RotoTexH% - 1
+        FOR x% = 0 TO RotoTexW% - 1
+            tile%(y%, x%) = (y% AND x%) * RND(255)
+        NEXT x%
+    NEXT y%
+
+    FOR i% = 0 TO RotoDivN%
+        RotoDivs%(i%) = i% \ 256
+    NEXT i%
+
+END SUB
+
 SUB InitPalette (fxType%)
 
     OUT &H3C8, 0
@@ -241,6 +275,8 @@ SUB InitPalette (fxType%)
             SetGradPal 192, 255, 47, 15, 63, 0, 0, 0
 
         CASE fxRotozoomer%
+
+            SetGradPal 0, 15, 0, 0, 0, 63, 47, 31
 
         CASE fxFloor%
 
@@ -268,6 +304,7 @@ SUB InitPrecalcs (fxType%)
             InitFxPlasma
 
         CASE fxRotozoomer%
+            InitFxRotozoomer
 
         CASE fxFloor%
 
@@ -293,6 +330,7 @@ SUB RunFx (fxType%)
             RunFxPlasma
 
         CASE fxRotozoomer%
+            RunFxRotozoomer
 
         CASE fxFloor%
 
@@ -342,6 +380,67 @@ SUB RunFxPlasma
             i% = i% + 8
         NEXT x%
     NEXT y%
+
+END SUB
+
+SUB RunFxRotozoomer
+
+    STATIC rotAng!
+
+    t% = nframe& AND 32767
+
+    zoom! = SIN(t% * .02) + 1.5
+   
+    du% = COS(rotAng!) * 64 * zoom!
+    dv% = SIN(rotAng!) * 64 * zoom!
+
+    du2% = 2 * du%
+    dv2% = 2 * dv%
+    du3% = 3 * du%
+    dv3% = 3 * dv%
+    du4% = 4 * du%
+    dv4% = 4 * dv%
+    du5% = 5 * du%
+    dv5% = 5 * dv%
+    du6% = 6 * du%
+    dv6% = 6 * dv%
+    du7% = 7 * du%
+    dv7% = 7 * dv%
+    du8% = 8 * du%
+    dv8% = 8 * dv%
+
+    u% = -160 * du%
+    v% = -100 * dv%
+
+    screenSeg& = VARSEG(vram%(0)) + 1
+
+    FOR y% = 0 TO SCRHEIGHT% - 1
+        DEF SEG = screenSeg& + y% * 20
+
+        pu% = u%
+        pv% = v%
+
+        FOR x% = 0 TO SCRWIDTH% - 1 STEP 8
+
+            POKE x%, tile%(RotoDivs%(pv% AND RotoDivN%), RotoDivs%(pu% AND RotoDivN%))
+            POKE x% + 1, tile%(RotoDivs%((pv% + dv%) AND RotoDivN%), RotoDivs%((pu% + du%) AND RotoDivN%))
+            POKE x% + 2, tile%(RotoDivs%((pv% + dv2%) AND RotoDivN%), RotoDivs%((pu% + du2%) AND RotoDivN%))
+            POKE x% + 3, tile%(RotoDivs%((pv% + dv3%) AND RotoDivN%), RotoDivs%((pu% + du3%) AND RotoDivN%))
+            POKE x% + 4, tile%(RotoDivs%((pv% + dv4%) AND RotoDivN%), RotoDivs%((pu% + du4%) AND RotoDivN%))
+            POKE x% + 5, tile%(RotoDivs%((pv% + dv5%) AND RotoDivN%), RotoDivs%((pu% + du5%) AND RotoDivN%))
+            POKE x% + 6, tile%(RotoDivs%((pv% + dv6%) AND RotoDivN%), RotoDivs%((pu% + du6%) AND RotoDivN%))
+            POKE x% + 7, tile%(RotoDivs%((pv% + dv7%) AND RotoDivN%), RotoDivs%((pu% + du7%) AND RotoDivN%))
+
+            pu% = pu% + du8%
+            pv% = pv% + dv8%
+
+        NEXT x%
+
+        u% = u% - dv%
+        v% = v% + du%
+    NEXT y%
+
+    rotAng! = rotAng! + .025
 
 END SUB
 
