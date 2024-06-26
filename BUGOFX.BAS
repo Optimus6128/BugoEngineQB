@@ -1,3 +1,4 @@
+DECLARE SUB MirrorVramY ()
 TYPE StepVars
     u AS INTEGER
     v AS INTEGER
@@ -166,7 +167,7 @@ SUB CalcLineStepVars (moveX&, moveY&, angle!)
 
     CONST SKYHEIGHT& = 4096
 
-    FOR y% = 0 TO SCRHEIGHT% - 1
+    FOR y% = 0 TO SCRHEIGHT% \ 2 - 1
         yp% = SCRHEIGHT% \ 2 - y%
         IF yp% < 0 THEN yp% = -yp%
         IF yp% = 0 THEN yp% = 1
@@ -312,7 +313,7 @@ SUB InitFxRotozoomer
 
     FOR y% = 0 TO RotoTexH% - 1
         FOR x% = 0 TO RotoTexW% - 1
-            tile%(y%, x%) = ((2 * y%) AND (2 * x%)) * RND
+            tile%(y%, x%) = 2 * (x% * y%)
         NEXT x%
     NEXT y%
 
@@ -337,7 +338,8 @@ SUB InitPalette (fxType%)
 
         CASE fxRotozoomer%
 
-            SetGradPal 0, 15, 0, 0, 0, 63, 47, 31
+            SetGradPal 0, 127, 15, 7, 31, 63, 47, 31
+            SetGradPal 128, 255, 63, 47, 31, 15, 7, 31
 
         CASE fxFloor%
 
@@ -407,6 +409,26 @@ SUB InitPrecalcs (fxType%)
 
 END SUB
 
+SUB MirrorVramY
+
+    FOR y% = 0 TO SCRHEIGHT% \ 2 - 1
+        i% = 8 + y% * (SCRWIDTH% \ 2)
+        j% = 8 + (SCRHEIGHT% - 1 - y%) * (SCRWIDTH% \ 2)
+        FOR x% = 0 TO SCRWIDTH% \ 2 - 1 STEP 8
+            vram%(j%) = vram%(i%)
+            vram%(j% + 1) = vram%(i% + 1)
+            vram%(j% + 2) = vram%(i% + 2)
+            vram%(j% + 3) = vram%(i% + 3)
+            vram%(j% + 4) = vram%(i% + 4)
+            vram%(j% + 5) = vram%(i% + 5)
+            vram%(j% + 6) = vram%(i% + 6)
+            vram%(j% + 7) = vram%(i% + 7)
+            i% = i% + 8: j% = j% + 8
+        NEXT x%
+    NEXT y%
+
+END SUB
+
 SUB RotatePoint2D (x&, y&, angle!)
 
     rx! = COS(angle!)
@@ -456,7 +478,7 @@ SUB RunFxFloor
 
     screenSeg& = VARSEG(vram%(0)) + 1
 
-    FOR y% = 0 TO SCRHEIGHT% - 1
+    FOR y% = 0 TO SCRHEIGHT% \ 2 - 1
         DEF SEG = screenSeg& + y% * 20
 
         u% = lineStepVars(y%).u
@@ -498,9 +520,11 @@ SUB RunFxFloor
 
     NEXT y%
 
-    angle! = angle! + .0025
-    posX& = posX& + 128 * COS(angle!)
-    posY& = posY& + 128 * SIN(angle!)
+    MirrorVramY
+
+    angle! = angle! + .005
+    posX& = posX& + 64 * COS(angle!)
+    posY& = posY& + 64 * SIN(angle!)
 
 END SUB
 
@@ -569,22 +593,22 @@ SUB RunFxRotozoomer
 
     screenSeg& = VARSEG(vram%(0)) + 1
 
-    FOR y% = 0 TO SCRHEIGHT% - 1
+    FOR y% = 0 TO SCRHEIGHT% \ 2 - 1
         DEF SEG = screenSeg& + y% * 20
 
         pu% = u%
         pv% = v%
 
-        FOR x% = 0 TO SCRWIDTH% - 1 STEP 8
+        FOR x% = 0 TO SCRWIDTH% \ 2 - 1 STEP 8
 
-            POKE x%, tile%(RotoDivs%(pv% AND RotoDivN%), RotoDivs%(pu% AND RotoDivN%))
-            POKE x% + 1, tile%(RotoDivs%((pv% + dv1%) AND RotoDivN%), RotoDivs%((pu% + du1%) AND RotoDivN%))
-            POKE x% + 2, tile%(RotoDivs%((pv% + dv2%) AND RotoDivN%), RotoDivs%((pu% + du2%) AND RotoDivN%))
-            POKE x% + 3, tile%(RotoDivs%((pv% + dv3%) AND RotoDivN%), RotoDivs%((pu% + du3%) AND RotoDivN%))
-            POKE x% + 4, tile%(RotoDivs%((pv% + dv4%) AND RotoDivN%), RotoDivs%((pu% + du4%) AND RotoDivN%))
-            POKE x% + 5, tile%(RotoDivs%((pv% + dv5%) AND RotoDivN%), RotoDivs%((pu% + du5%) AND RotoDivN%))
-            POKE x% + 6, tile%(RotoDivs%((pv% + dv6%) AND RotoDivN%), RotoDivs%((pu% + du6%) AND RotoDivN%))
-            POKE x% + 7, tile%(RotoDivs%((pv% + dv7%) AND RotoDivN%), RotoDivs%((pu% + du7%) AND RotoDivN%))
+            c% = tile%(RotoDivs%(pv% AND RotoDivN%), RotoDivs%(pu% AND RotoDivN%)): POKE x%, c%: POKE SCRWIDTH% - 1 - x%, c%
+            c% = tile%(RotoDivs%((pv% + dv1%) AND RotoDivN%), RotoDivs%((pu% + du1%) AND RotoDivN%)): POKE x% + 1, c%: POKE SCRWIDTH% - 2 - x%, c%
+            c% = tile%(RotoDivs%((pv% + dv2%) AND RotoDivN%), RotoDivs%((pu% + du2%) AND RotoDivN%)): POKE x% + 2, c%: POKE SCRWIDTH% - 3 - x%, c%
+            c% = tile%(RotoDivs%((pv% + dv3%) AND RotoDivN%), RotoDivs%((pu% + du3%) AND RotoDivN%)): POKE x% + 3, c%: POKE SCRWIDTH% - 4 - x%, c%
+            c% = tile%(RotoDivs%((pv% + dv4%) AND RotoDivN%), RotoDivs%((pu% + du4%) AND RotoDivN%)): POKE x% + 4, c%: POKE SCRWIDTH% - 5 - x%, c%
+            c% = tile%(RotoDivs%((pv% + dv5%) AND RotoDivN%), RotoDivs%((pu% + du5%) AND RotoDivN%)): POKE x% + 5, c%: POKE SCRWIDTH% - 6 - x%, c%
+            c% = tile%(RotoDivs%((pv% + dv6%) AND RotoDivN%), RotoDivs%((pu% + du6%) AND RotoDivN%)): POKE x% + 6, c%: POKE SCRWIDTH% - 7 - x%, c%
+            c% = tile%(RotoDivs%((pv% + dv7%) AND RotoDivN%), RotoDivs%((pu% + du7%) AND RotoDivN%)): POKE x% + 7, c%: POKE SCRWIDTH% - 8 - x%, c%
 
             pu% = pu% + du8%
             pv% = pv% + dv8%
@@ -595,6 +619,8 @@ SUB RunFxRotozoomer
         u% = u% - dv%
         v% = v% + du%
     NEXT y%
+
+    MirrorVramY
 
     angle! = angle! + .025
 
