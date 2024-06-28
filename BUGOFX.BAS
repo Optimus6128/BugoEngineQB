@@ -1,4 +1,4 @@
-DECLARE SUB MirrorVramY ()
+DECLARE SUB RenderLightToBuffer (xp%, yp%, buff%())
 TYPE StepVars
     u AS INTEGER
     v AS INTEGER
@@ -35,6 +35,8 @@ DECLARE SUB ClearVram ()
 DECLARE SUB WriteVram ()
 DECLARE SUB WaitForVsync ()
 
+DECLARE SUB MirrorVramY ()
+
 DECLARE SUB HandleInput (dt!)
 
 
@@ -43,15 +45,22 @@ DECLARE SUB HandleInput (dt!)
 DECLARE SUB InitFxPlasma ()
 DECLARE SUB InitFxRotozoomer ()
 DECLARE SUB InitFxFloor ()
+DECLARE SUB InitFxSphere ()
+DECLARE SUB InitFxBump ()
 
 DECLARE SUB RunFxPlasma ()
 DECLARE SUB RunFxRotozoomer ()
 DECLARE SUB RunFxFloor ()
+DECLARE SUB RunFxBump ()
+DECLARE SUB RunFxSphere ()
 
 DECLARE SUB RunFx (fxType%)
 
 DECLARE SUB RotatePoint2D (x&, y&, angle!)
 DECLARE SUB CalcLineStepVars (moveX&, moveY&, angle!)
+
+DECLARE SUB InitBumpSurface (buff%(), tempBuff%(), buffIndex%)
+DECLARE SUB InitBumpLight ()
 
 ' ---- Main arrays ----
 
@@ -60,6 +69,11 @@ DECLARE SUB CalcLineStepVars (moveX&, moveY&, angle!)
 DIM SHARED vram%(0 TO 32007)
 vram%(6) = 320 * 8
 vram%(7) = 200
+
+DIM SHARED buff0%(0 TO 31999)
+DIM SHARED buff1%(0 TO 31999)
+DIM SHARED buff2%(0 TO 31999)
+'DIM SHARED buff3%(0 TO 31999)
 
 '$STATIC
 
@@ -72,11 +86,6 @@ DIM SHARED nframe&
 
 
 ' ---- Fx arrays ----
-
-DIM SHARED fsin1%(0 TO 255)
-DIM SHARED fsin2%(0 TO 255)
-DIM SHARED fsin3%(0 TO 255)
-
 
 ' If you change the texture sizes (preferably always power of two) you have to manually change the numbers in the array declaration below
 CONST RotoTexW% = 16
@@ -92,6 +101,16 @@ DIM SHARED RotoDivs%(0 TO RotoDivN%)
 
 DIM SHARED lineStepVars(0 TO SCRHEIGHT% - 1) AS StepVars
 
+DIM SHARED fsin1%(0 TO 255)
+DIM SHARED fsin2%(0 TO 255)
+DIM SHARED fsin3%(0 TO 255)
+
+CONST bumpLightW% = 128
+CONST bumpLightH% = 128
+CONST bumpLightSize% = bumpLightW% * bumpLightH%
+
+DIM SHARED bumpLight%(0 TO bumpLightSize% - 1)
+
 
 ' ---- Fx index ----
 
@@ -103,7 +122,7 @@ CONST fxSphere% = 4
 CONST fxVoxel% = 5
 CONST fxWater% = 6
 
-fxCurrent% = fxFloor%
+fxCurrent% = fxBump%
 
 
 ' ---- Init ----
@@ -289,6 +308,82 @@ SUB HandleInput (dt!)
 
 END SUB
 
+SUB InitBumpLight
+
+    i% = 0
+    FOR y% = 0 TO bumpLightH% - 1
+        yp% = y% - bumpLightH% \ 2
+        FOR x% = 0 TO bumpLightW% - 1
+            xp% = x% - bumpLightW% \ 2
+
+            r& = xp% * xp% + yp% * yp%
+            'r& = r& * r&
+            IF r& = 0 THEN r& = 1
+            'c& = (8 * 16777216) \ r&
+            c& = 131072 \ r&
+            IF c& > 255 THEN c& = 255
+            bumpLight%(i%) = c&
+            i% = i% + 1
+
+        NEXT x%
+    NEXT y%
+
+END SUB
+
+SUB InitBumpSurface (buff%(), tempBuff%(), buffIndex%)
+
+    CONST bScale% = 256
+
+    FOR i% = 0 TO 31999
+        buff%(i%) = INT(RND * bScale%)
+    NEXT i%
+
+    FOR j% = 0 TO 1
+        FOR i% = 0 TO 31999
+            iL% = (i% - 1) MOD 32000: IF iL% < 0 THEN iL% = iL% + 32000
+            iR% = (i% + 1) MOD 32000
+            iU% = (i% - 320) MOD 32000: IF iU% < 0 THEN iU% = iU% + 32000
+            iD% = (i% + 320) MOD 32000
+
+            c% = (buff%(iL%) + buff%(iR%) + buff%(iU%) + buff%(iD%)) \ 4
+            buff%(i%) = c%
+        NEXT i%
+    NEXT j%
+
+    i% = 0
+    FOR y% = 0 TO SCRHEIGHT% \ 2 - 1
+        yi% = (y% \ 2) * SCRWIDTH%
+        FOR x% = 0 TO SCRWIDTH% - 1
+            iR% = (i% + 1) MOD 32000
+            iD% = (i% + 320) MOD 32000
+
+            dx% = buff%(iR%) - buff%(i%): dy% = buff%(iD%) - buff%(i%)
+            diOff& = buffIndex% * 16000
+            di& = (diOff& + yi% + (dy% \ 2) * SCRWIDTH% + x% + dx%) MOD 32000
+            IF di& < 0 THEN di& = di& + 32000
+
+            tempBuff%(i%) = di&
+            i% = i% + 1
+        NEXT x%
+    NEXT y%
+
+    FOR i% = 0 TO 31999
+        buff%(i%) = tempBuff%(i%)
+    NEXT i%
+
+END SUB
+
+SUB InitFxBump
+
+    InitBumpSurface buff0%(), buff2%(), 0
+    InitBumpSurface buff1%(), buff2%(), 1
+
+    InitBumpLight
+
+    REDIM buff2%(0 TO 31999)
+
+END SUB
+
 SUB InitFxFloor
 
     FOR y% = 0 TO RotoTexH% - 1
@@ -316,6 +411,10 @@ SUB InitFxRotozoomer
             tile%(y%, x%) = 2 * (x% * y%)
         NEXT x%
     NEXT y%
+
+END SUB
+
+SUB InitFxSphere
 
 END SUB
 
@@ -356,6 +455,8 @@ SUB InitPalette (fxType%)
             NEXT i%
 
         CASE fxBump%
+            SetGradPal 0, 127, 0, 0, 0, 31, 27, 15
+            SetGradPal 128, 255, 31, 27, 15, 47, 44, 40
 
         CASE fxSphere%
 
@@ -387,8 +488,10 @@ SUB InitPrecalcs (fxType%)
             mustInitRotoDivs% = TRUE%
 
         CASE fxBump%
+            InitFxBump
 
         CASE fxSphere%
+            InitFxSphere
 
         CASE fxVoxel%
 
@@ -429,6 +532,30 @@ SUB MirrorVramY
 
 END SUB
 
+SUB RenderLightToBuffer (xp%, yp%, buff%())
+
+    i% = 0
+    FOR y% = 0 TO bumpLightH% - 1
+        yi% = y% + yp%
+        IF yi% >= 0 AND yi% < SCRHEIGHT% THEN
+            yi% = (yi% \ 2) * SCRWIDTH%
+            FOR x% = 0 TO bumpLightW% - 1 STEP 8
+                buff%(yi% + x% + xp%) = bumpLight%(i%)
+                buff%(yi% + x% + xp% + 1) = bumpLight%(i% + 1)
+                buff%(yi% + x% + xp% + 2) = bumpLight%(i% + 2)
+                buff%(yi% + x% + xp% + 3) = bumpLight%(i% + 3)
+                buff%(yi% + x% + xp% + 4) = bumpLight%(i% + 4)
+                buff%(yi% + x% + xp% + 5) = bumpLight%(i% + 5)
+                buff%(yi% + x% + xp% + 6) = bumpLight%(i% + 6)
+                buff%(yi% + x% + xp% + 7) = bumpLight%(i% + 7)
+                i% = i% + 8
+            NEXT x%
+        END IF
+    NEXT y%
+
+
+END SUB
+
 SUB RotatePoint2D (x&, y&, angle!)
 
     rx! = COS(angle!)
@@ -456,8 +583,10 @@ SUB RunFx (fxType%)
             RunFxFloor
 
         CASE fxBump%
+            RunFxBump
 
         CASE fxSphere%
+            RunFxSphere
 
         CASE fxVoxel%
 
@@ -466,6 +595,45 @@ SUB RunFx (fxType%)
         CASE ELSE
 
     END SELECT
+
+END SUB
+
+SUB RunFxBump
+
+    ' Dirty rectangles will do for now (commenting out below line)
+    'REDIM buff2%(0 TO 31999)
+
+    t% = nframe& AND 32767
+    px% = SCRWIDTH% \ 2 - bumpLightW% \ 2 + SIN(t% / 32) * 64
+    py% = SCRHEIGHT% \ 2 - bumpLightH% \ 2 + SIN(t% / 40) * 24
+
+    RenderLightToBuffer px%, py%, buff2%()
+
+    screenSeg& = VARSEG(vram%(0)) + 1
+
+    DEF SEG = screenSeg&
+    FOR i% = 0 TO 31999 STEP 8
+        POKE i%, buff2%(buff0%(i%))
+        POKE i% + 1, buff2%(buff0%(i% + 1))
+        POKE i% + 2, buff2%(buff0%(i% + 2))
+        POKE i% + 3, buff2%(buff0%(i% + 3))
+        POKE i% + 4, buff2%(buff0%(i% + 4))
+        POKE i% + 5, buff2%(buff0%(i% + 5))
+        POKE i% + 6, buff2%(buff0%(i% + 6))
+        POKE i% + 7, buff2%(buff0%(i% + 7))
+    NEXT i%
+
+    DEF SEG = screenSeg& + 100 * 20
+    FOR i% = 0 TO 31999 STEP 8
+        POKE i%, buff2%(buff1%(i%))
+        POKE i% + 1, buff2%(buff1%(i% + 1))
+        POKE i% + 2, buff2%(buff1%(i% + 2))
+        POKE i% + 3, buff2%(buff1%(i% + 3))
+        POKE i% + 4, buff2%(buff1%(i% + 4))
+        POKE i% + 5, buff2%(buff1%(i% + 5))
+        POKE i% + 6, buff2%(buff1%(i% + 6))
+        POKE i% + 7, buff2%(buff1%(i% + 7))
+    NEXT i%
 
 END SUB
 
@@ -623,6 +791,10 @@ SUB RunFxRotozoomer
     MirrorVramY
 
     angle! = angle! + .025
+
+END SUB
+
+SUB RunFxSphere
 
 END SUB
 
