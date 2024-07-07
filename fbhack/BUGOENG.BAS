@@ -299,7 +299,7 @@ CONST objLoadMask% = 6
 CONST numObjects% = 7
 CONST numMaterials = 16
 
-DIM SHARED object(0 TO numObjects% - 1) AS Object3D
+DIM SHARED objecta(0 TO numObjects% - 1) AS Object3D
 
 DIM SHARED material(0 TO numMaterials% - 1) AS PolyMaterial
 
@@ -391,10 +391,13 @@ nframe& = 0
 
 t! = 0
 
+'timeElapsed! = 0
+
+timeFuck = timer
 timeStart! = TIMER
 timeDiff! = 0
 lastTime! = timeStart!
-DO WHILE quit% = FALSE% AND timeElapsed! < BENCHSECS%
+DO WHILE quit% = FALSE% 'AND timeElapsed! < BENCHSECS%
 
     ClearVram
 
@@ -420,11 +423,11 @@ DO WHILE quit% = FALSE% AND timeElapsed! < BENCHSECS%
     lastTime! = TIMER
     timeElapsed! = TIMER - timeStart!
 LOOP
-timeEnd! = TIMER
+timeEnd = TIMER
 
 SCREEN 1
 
-PRINT nframe& / (timeEnd! - timeStart!)
+PRINT nframe& / (timeEnd - timeFuck)
 SLEEP
 
 ' Unload FFIX from memory
@@ -1359,29 +1362,29 @@ SUB HandleInput (dt!)
     SELECT CASE key$
 
         CASE "q", "Q"
-            object(currentObject%).renderType = renderTypeDots%
+            objecta(currentObject%).renderType = renderTypeDots%
 
         CASE "w", "W"
-            object(currentObject%).renderType = renderTypeWire%
+            objecta(currentObject%).renderType = renderTypeWire%
 
         CASE "e", "E"
-            object(currentObject%).renderType = renderTypePoly%
+            objecta(currentObject%).renderType = renderTypePoly%
 
         CASE "a", "A"
-            object(currentObject%).polyStyle = polyStyleFlat%
+            objecta(currentObject%).polyStyle = polyStyleFlat%
 
         CASE "s", "S"
-            object(currentObject%).polyStyle = polyStyleGouraud%
+            objecta(currentObject%).polyStyle = polyStyleGouraud%
 
         CASE "d", "D"
-            object(currentObject%).polyStyle = polyStyleTextured%
+            objecta(currentObject%).polyStyle = polyStyleTextured%
 
         CASE "f", "F"
-            object(currentObject%).polyStyle = polyStyleTexturedGouraud%
+            objecta(currentObject%).polyStyle = polyStyleTexturedGouraud%
 
         CASE "p", "P"
             currentMatIndex% = (currentMatIndex% + 1) AND 3
-            ChangeObjectPolyMaterials object(currentObject%), currentMatIndex%
+            ChangeObjectPolyMaterials objecta(currentObject%), currentMatIndex%
 
         CASE "z", "Z"
             rotX! = rotX! + PI! / 2
@@ -1451,8 +1454,8 @@ SUB HandleInput (dt!)
         IF zBase! + posZ! < minAllowedZ! THEN posZ! = minAllowedZ! - zBase!
         IF zBase! + posZ! > maxAllowedZ! THEN posZ! = maxAllowedZ! - zBase!
 
-        SetObjectPosition object(currentObject%), posX!, posY!, zBase! + posZ!
-        SetObjectRotation object(currentObject%), rotX!, rotY!, rotZ!
+        SetObjectPosition objecta(currentObject%), posX!, posY!, zBase! + posZ!
+        SetObjectRotation objecta(currentObject%), rotX!, rotY!, rotZ!
 
         rotX! = rotX! + dt! * rotVelX!
         rotY! = rotY! + dt! * rotVelY!
@@ -1490,8 +1493,8 @@ SUB InitScene3D
 
     DIM genParams AS ObjGenParams
 
-    object(currentObject%).renderType = renderTypePoly%
-    object(currentObject%).polyStyle = polyStyleFlat%
+    objecta(currentObject%).renderType = renderTypePoly%
+    objecta(currentObject%).polyStyle = polyStyleFlat%
 
     SELECT CASE currentObject%
 
@@ -1500,7 +1503,7 @@ SUB InitScene3D
 
         CASE objGenDotCube%
             genParams.size = 16
-            object(currentObject%).renderType = renderTypeDots%
+            objecta(currentObject%).renderType = renderTypeDots%
 
         CASE objGenSphere%
 
@@ -1519,15 +1522,15 @@ SUB InitScene3D
 
     IF objectLoadFile$ = "" THEN
         genParams.index = currentObject%
-        GenObject3D genParams, object(currentObject%)
+        GenObject3D genParams, objecta(currentObject%)
     ELSE
-        LoadObject3D objectLoadFile$, object(currentObject%)
+        LoadObject3D objectLoadFile$, objecta(currentObject%)
 
-        FindObjectScaleToFit object(currentObject%), defaultScaleRange!, scaleValue!
-        ScaleObjectVertices object(currentObject%), scaleValue!, scaleValue!, scaleValue!
+        FindObjectScaleToFit objecta(currentObject%), defaultScaleRange!, scaleValue!
+        ScaleObjectVertices objecta(currentObject%), scaleValue!, scaleValue!, scaleValue!
 
-        CalcObjectPolyNormals object(currentObject%)
-        CalcObjectVertexNormals object(currentObject%)
+        CalcObjectPolyNormals objecta(currentObject%)
+        CalcObjectVertexNormals objecta(currentObject%)
     END IF
 
 END SUB
@@ -2154,14 +2157,14 @@ SUB RunScene3D (t!)
 
         END SELECT
 
-        SetObjectPosition object(currentObject%), xt!, yt!, zt!
-        SetObjectRotation object(currentObject%), rx!, ry!, rz!
+        SetObjectPosition objecta(currentObject%), xt!, yt!, zt!
+        SetObjectRotation objecta(currentObject%), rx!, ry!, rz!
     END IF
 
     SetLightPosition 0, 0, 1, 0
 
-    TransformObject3D object(currentObject%)
-    RenderObject3D object(currentObject%)
+    TransformObject3D objecta(currentObject%)
+    RenderObject3D objecta(currentObject%)
 
 END SUB
 

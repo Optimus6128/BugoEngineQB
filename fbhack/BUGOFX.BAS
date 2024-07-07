@@ -150,6 +150,7 @@ nframe& = 0
 
 t! = 0
 
+timeFuck = timer
 timeStart! = TIMER
 timeDiff! = 0
 lastTime! = timeStart!
@@ -186,11 +187,11 @@ DO WHILE quit% = FALSE%
     lastTime! = TIMER
     timeElapsed! = TIMER - timeStart!
 LOOP
-timeEnd! = TIMER
+timeEnd = TIMER
 
 SCREEN 1
 
-PRINT nframe& / (timeEnd! - timeStart!)
+PRINT nframe& / (timeEnd - timeFuck)
 SLEEP
 
 ' Unload FFIX from memory
@@ -584,7 +585,7 @@ SUB RunFxBump
     ' Dirty rectangles will do for now (commenting out below line)
     'REDIM buff2%(0 TO 31999)
 
-    t% = (nframe& \ 64) AND 32767
+    t% = nframe& AND 32767
     px% = SCRWIDTH% \ 2 - bumpLightW% \ 2 + SIN(t% / 32) * 64
     py% = SCRHEIGHT% \ 2 - bumpLightH% \ 2 + SIN(t% / 40) * 24
 
