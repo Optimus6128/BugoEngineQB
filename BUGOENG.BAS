@@ -79,7 +79,7 @@ CONST TRUE% = 1
 
 CONST PI! = 3.14159265359#
 
-CONST BENCHSECS% = 15 ' put something high to not exit or bench or say 15 secs to run alone and exit with fps
+CONST BENCHSECS% = 32767 ' put something high to not exit or bench or say 15 secs to run alone and exit with fps
 CONST CONTROLS% = FALSE% ' If false, auto rotate object in RunScene3D, else let the user control position/rotation
 
 ' ---- Main Functions ----
@@ -104,6 +104,12 @@ DECLARE SUB ClearBlurJunk ()
 DECLARE SUB BlurVram ()
 DECLARE SUB BlurVramX ()
 DECLARE SUB BlurVramY ()
+
+DECLARE SUB RotatePoint2D (x&, y&, angle!)
+DECLARE SUB MirrorVramY ()
+DECLARE SUB CalcLineStepVars (moveX&, moveY&, angle!)
+DECLARE SUB InitFxFloor ()
+DECLARE SUB RunFxFloor ()
 
 
 ' ---- Vector Math functions ----
@@ -210,6 +216,7 @@ DECLARE SUB GenEnvmapTex (num%)
 ' ---- Engine Consts ----
 
 CONST BLURSWITCH% = 0   ' blur will overflow in interpreter only compiled exe
+CONST FXSWITCH% = 1 ' if FX don't erase background at the beginning of each frame, the fx will
 
 CONST FPRAST% = 64
 CONST LFPRAST& = 65536  ' experimental for higher texture interpolator precision but slower along with two functions using it, might not use it
@@ -269,6 +276,32 @@ DIM SHARED DivFPRAST%(DivFPRASTneg% TO DivFPRASTrange% - 1)
 DIM SHARED blobTex%(0 TO ENVTEXWIDTH% * ENVTEXHEIGHT% - 1)
 
 '$STATIC
+
+' ---- Floor FX ----
+
+TYPE StepVars
+    u AS INTEGER
+    v AS INTEGER
+    du AS INTEGER
+    dv AS INTEGER
+    shade AS INTEGER
+END TYPE
+
+' If you change the texture sizes (preferably always power of two) you have to manually change the numbers in the array declaration below
+CONST RotoTexW% = 16
+CONST RotoTexH% = 16
+CONST RotoDivN% = RotoTexW% * 256 - 1
+CONST fuw% = RotoTexW% - 1
+CONST fuh% = RotoTexH% - 1
+
+DIM SHARED tile%(0 TO fuw%, 0 TO fuh%)' using the consts here would degrade performance, suddenly the compiler will not produce shifts for 16 but imul
+' update, using second consts to do first const minus 1 will save you. Weird.. but ugly
+
+DIM SHARED RotoDivs%(0 TO RotoDivN%)
+
+DIM SHARED lineStepVars(0 TO SCRHEIGHT% - 1) AS StepVars
+
+DIM SHARED fxFloorPalIndex%
 
 
 ' ---- Object pool sizes ----
@@ -393,7 +426,8 @@ timeDiff! = 0
 lastTime! = timeStart!
 DO WHILE quit% = FALSE% AND timeElapsed! < BENCHSECS%
 
-    IF BLURSWITCH% = 0 THEN ClearVram
+    IF BLURSWITCH% = 0 AND FXSWITCH% = 0 THEN ClearVram
+    IF FXSWITCH% = 1 THEN RunFxFloor
 
     HandleInput timeDiff!
 
@@ -523,6 +557,46 @@ SUB BlurVramY
     NEXT i%
 
     ClearBlurJunk
+
+END SUB
+
+SUB CalcLineStepVars (moveX&, moveY&, angle!)
+
+    CONST SKYHEIGHT& = 4096
+
+    fxFloorPalOffset% = fxFloorPalIndex% * 64
+
+    FOR y% = 0 TO SCRHEIGHT% \ 2 - 1
+        yp% = SCRHEIGHT% \ 2 - y%
+        IF yp% < 0 THEN yp% = -yp%
+        IF yp% = 0 THEN yp% = 1
+
+        z& = SKYHEIGHT& \ yp%
+        u& = 0 + moveX&
+        v& = 128 * z& + moveY&
+
+        du& = z&
+        dv& = 0
+
+        RotatePoint2D u&, v&, angle!
+        RotatePoint2D du&, dv&, angle!
+
+        u& = u& + (-SCRWIDTH% \ 2) * du&
+        v& = v& + (-SCRHEIGHT% \ 2) * dv&
+
+        lineStepVars(y%).u = u&
+        lineStepVars(y%).v = v&
+        lineStepVars(y%).du = du&
+        lineStepVars(y%).dv = dv&
+
+        s% = z& \ 8
+        IF s% < 0 THEN s% = 0
+        IF s% > 47 THEN s% = 47
+        lineStepVars(y%).shade = fxFloorPalOffset% + 47 - s%
+
+        u% = u% - dv%
+        v% = v% + du%
+    NEXT y%
 
 END SUB
 
@@ -1409,6 +1483,9 @@ SUB HandleInput (dt!)
             currentMatIndex% = (currentMatIndex% + 1) AND 3
             ChangeObjectPolyMaterials object(currentObject%), currentMatIndex%
 
+        CASE "l", "L"
+            fxFloorPalIndex% = (fxFloorPalIndex% + 1) AND 3
+
         CASE "z", "Z"
             rotX! = rotX! + PI! / 2
 
@@ -1488,6 +1565,22 @@ SUB HandleInput (dt!)
 
 END SUB
 
+SUB InitFxFloor
+
+' Rotodivs for floor
+    FOR i% = 0 TO RotoDivN%
+        RotoDivs%(i%) = i% \ 256
+    NEXT i%
+
+' Texture
+    FOR y% = 0 TO RotoTexH% - 1
+        FOR x% = 0 TO RotoTexW% - 1
+            tile%(y%, x%) = (((x% XOR y%) * RND) AND 31)
+        NEXT x%
+    NEXT y%
+
+END SUB
+
 SUB InitPrecalcs
 
 ' LUT to divide by FPRAST% as qbasic doesn't convert integer division by power of two to shifts
@@ -1509,6 +1602,9 @@ SUB InitPrecalcs
 ' Texture for envmap
 
     GenEnvmapTex 0
+
+' Floor precalcs
+    InitFxFloor
 
 END SUB
 
@@ -1721,6 +1817,26 @@ SUB LoadObject3Dplg (objFile$, obj AS Object3D)
     CLOSE #1
 
     CenterObjectVertices obj
+
+END SUB
+
+SUB MirrorVramY
+
+    FOR y% = 0 TO SCRHEIGHT% \ 2 - 1
+        i% = 8 + y% * (SCRWIDTH% \ 2)
+        j% = 8 + (SCRHEIGHT% - 1 - y%) * (SCRWIDTH% \ 2)
+        FOR x% = 0 TO SCRWIDTH% \ 2 - 1 STEP 8
+            vram%(j%) = vram%(i%)
+            vram%(j% + 1) = vram%(i% + 1)
+            vram%(j% + 2) = vram%(i% + 2)
+            vram%(j% + 3) = vram%(i% + 3)
+            vram%(j% + 4) = vram%(i% + 4)
+            vram%(j% + 5) = vram%(i% + 5)
+            vram%(j% + 6) = vram%(i% + 6)
+            vram%(j% + 7) = vram%(i% + 7)
+            i% = i% + 8: j% = j% + 8
+        NEXT x%
+    NEXT y%
 
 END SUB
 
@@ -2125,6 +2241,78 @@ SUB RotateObjectVertexNormals (obj AS Object3D, mat!())
         vnOffset% = vnOffset% + 1
 
     NEXT i%
+
+END SUB
+
+SUB RotatePoint2D (x&, y&, angle!)
+
+    rx! = COS(angle!)
+    ry! = SIN(angle!)
+
+    xp! = x&
+    yp! = y&
+
+    x& = xp! * rx! - yp! * ry!
+    y& = xp! * ry! + yp! * rx!
+
+END SUB
+
+SUB RunFxFloor
+
+    STATIC angle!
+    STATIC posX&, posY&
+
+    CalcLineStepVars posX&, posY&, angle!
+
+    screenSeg& = VARSEG(vram%(0)) + 1
+
+    FOR y% = 0 TO SCRHEIGHT% \ 2 - 1
+        DEF SEG = screenSeg& + y% * 20
+
+        u% = lineStepVars(y%).u
+        v% = lineStepVars(y%).v
+        du% = lineStepVars(y%).du
+        dv% = lineStepVars(y%).dv
+        shadePal% = lineStepVars(y%).shade
+
+        du2% = 2 * du%
+        dv2% = 2 * dv%
+        du3% = du2% + du%
+        dv3% = dv2% + dv%
+        du4% = 2 * du2%
+        dv4% = 2 * dv2%
+        du5% = du4% + du%
+        dv5% = dv4% + dv%
+        du6% = du4% + du2%
+        dv6% = dv4% + dv2%
+        du7% = du6% + du%
+        dv7% = dv6% + dv%
+        du8% = 2 * du4%
+        dv8% = 2 * dv4%
+
+        FOR x% = 0 TO SCRWIDTH% - 1 STEP 8
+
+            POKE x%, tile%(RotoDivs%(v% AND RotoDivN%), RotoDivs%(u% AND RotoDivN%)) + shadePal%
+            POKE x% + 1, tile%(RotoDivs%((v% + dv1%) AND RotoDivN%), RotoDivs%((u% + du1%) AND RotoDivN%)) + shadePal%
+            POKE x% + 2, tile%(RotoDivs%((v% + dv2%) AND RotoDivN%), RotoDivs%((u% + du2%) AND RotoDivN%)) + shadePal%
+            POKE x% + 3, tile%(RotoDivs%((v% + dv3%) AND RotoDivN%), RotoDivs%((u% + du3%) AND RotoDivN%)) + shadePal%
+            POKE x% + 4, tile%(RotoDivs%((v% + dv4%) AND RotoDivN%), RotoDivs%((u% + du4%) AND RotoDivN%)) + shadePal%
+            POKE x% + 5, tile%(RotoDivs%((v% + dv5%) AND RotoDivN%), RotoDivs%((u% + du5%) AND RotoDivN%)) + shadePal%
+            POKE x% + 6, tile%(RotoDivs%((v% + dv6%) AND RotoDivN%), RotoDivs%((u% + du6%) AND RotoDivN%)) + shadePal%
+            POKE x% + 7, tile%(RotoDivs%((v% + dv7%) AND RotoDivN%), RotoDivs%((u% + du7%) AND RotoDivN%)) + shadePal%
+
+            u% = u% + du8%
+            v% = v% + dv8%
+
+        NEXT x%
+
+    NEXT y%
+
+    MirrorVramY
+
+    angle! = angle! + .005
+    posX& = posX& + 64 * COS(angle!)
+    posY& = posY& + 64 * SIN(angle!)
 
 END SUB
 
