@@ -216,7 +216,7 @@ DECLARE SUB GenEnvmapTex (num%)
 ' ---- Engine Consts ----
 
 CONST BLURSWITCH% = 0   ' blur will overflow in interpreter only compiled exe
-CONST FXSWITCH% = 1 ' if FX don't erase background at the beginning of each frame, the fx will
+FxSwitch% = 0 ' if FX don't erase background at the beginning of each frame, the fx will
 
 CONST FPRAST% = 64
 CONST LFPRAST& = 65536  ' experimental for higher texture interpolator precision but slower along with two functions using it, might not use it
@@ -398,6 +398,27 @@ quit% = FALSE%
 
 InitPrecalcs
 
+CLS
+
+PRINT "Keys:"
+PRINT "P: change object color"
+PRINT "L: change floormap color"
+PRINT
+PRINT "Q: 3D points"
+PRINT "W: Wireframe (if exists)"
+PRINT "E: Polygons"
+PRINT
+PRINT "A: Flat shading"
+PRINT "S: Gouraud shading"
+PRINT "D: Envmap"
+PRINT "F: Gouraud + Envmap"
+PRINT
+
+INPUT "FloorMap? (Y/N)", flm$
+
+IF flm$ = "y" OR flm$ = "Y" THEN FxSwitch% = 1
+
+
 SCREEN 13
 
 COLOR 63
@@ -426,8 +447,8 @@ timeDiff! = 0
 lastTime! = timeStart!
 DO WHILE quit% = FALSE% AND timeElapsed! < BENCHSECS%
 
-    IF BLURSWITCH% = 0 AND FXSWITCH% = 0 THEN ClearVram
-    IF FXSWITCH% = 1 THEN RunFxFloor
+    IF BLURSWITCH% = 0 AND FxSwitch% = 0 THEN ClearVram
+    IF FxSwitch% = 1 THEN RunFxFloor
 
     HandleInput timeDiff!
 
